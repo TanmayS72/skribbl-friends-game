@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { Clock, Eye, Sparkles } from 'lucide-react';
+import { Clock, Sparkles } from 'lucide-react';
 import { useGame } from '../../context/GameContext.js';
 import { sounds } from '../../audio/SoundEngine.js';
 
@@ -11,84 +11,80 @@ export const WordHintBar: React.FC = () => {
   const time = gameState.timeRemaining;
   const isUrgent = time <= 10 && time > 0 && gameState.phase === 'DRAWING';
 
-  // Sound ticking alert for last 5 seconds
   useEffect(() => {
     if (time <= 5 && time > 0 && gameState.phase === 'DRAWING') {
       sounds.playTick();
     }
   }, [time, gameState.phase]);
 
-  // Current drawer nickname
   const drawer = gameState.currentDrawerId && room?.players[gameState.currentDrawerId]
     ? room.players[gameState.currentDrawerId].nickname
     : 'Player';
 
   return (
-    <div className="w-full bg-slate-900/90 border border-slate-700/80 rounded-2xl px-4 py-2.5 sm:px-6 sm:py-3 shadow-xl backdrop-blur-md flex flex-wrap items-center justify-between gap-3 select-none mb-3">
-      {/* 1. Round & Drawer info */}
-      <div className="flex items-center gap-2 sm:gap-3">
-        <span className="text-xs sm:text-sm font-extrabold px-3 py-1 rounded-xl bg-brand-500/20 text-brand-300 border border-brand-500/30">
-          Round {gameState.currentRound} of {gameState.totalRounds}
+    <div className="w-full bg-white dark:bg-slate-900 border-b-2 border-blue-400 dark:border-blue-600/60 px-2 sm:px-3 py-1 sm:py-1.5 flex items-center justify-between gap-1 sm:gap-2 select-none shadow-xs">
+      {/* Round & Drawer info */}
+      <div className="flex items-center gap-1.5 shrink-0">
+        <span className="text-[10px] sm:text-xs font-black px-2 py-0.5 rounded-full bg-blue-500 text-white shrink-0">
+          R{gameState.currentRound}/{gameState.totalRounds}
         </span>
-        <span className="text-xs text-slate-400 hidden md:inline">
-          Drawer: <strong className="text-white">{isDrawer ? 'YOU' : drawer}</strong>
+        <span className="text-[10px] sm:text-xs text-gray-500 dark:text-slate-400 hidden md:inline truncate max-w-[120px]">
+          Drawer: <strong className="text-gray-800 dark:text-white">{isDrawer ? 'YOU' : drawer}</strong>
         </span>
       </div>
 
-      {/* 2. Word Hint or Secret Word */}
-      <div className="flex-1 flex flex-col items-center justify-center min-w-[180px]">
+      {/* Word hint / status center */}
+      <div className="flex-1 flex flex-col items-center justify-center min-w-0 px-1 text-center">
         {gameState.phase === 'CHOOSING_WORD' ? (
-          <div className="flex items-center gap-2 text-sm text-amber-300 font-bold animate-pulse">
-            <Sparkles className="w-4 h-4" />
-            <span>{isDrawer ? 'Choose your word!' : `${drawer} is choosing a word...`}</span>
+          <div className="flex items-center gap-1 text-xs sm:text-sm text-amber-600 dark:text-amber-400 font-bold animate-pulse truncate">
+            <Sparkles className="w-3.5 h-3.5 shrink-0" />
+            <span className="truncate">{isDrawer ? 'Choose your word!' : `${drawer} is choosing...`}</span>
           </div>
         ) : gameState.phase === 'DRAWING' ? (
           isDrawer ? (
-            <div className="flex flex-col items-center">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-brand-400">Your Word to Draw</span>
-              <span className="text-xl sm:text-2xl font-black text-white tracking-wider">
+            <div className="flex items-center gap-1.5">
+              <span className="text-[8px] sm:text-[9px] font-bold uppercase tracking-wider text-blue-500 dark:text-blue-400 hidden xs:inline">Draw:</span>
+              <span className="text-sm sm:text-lg font-black text-gray-900 dark:text-white tracking-wider truncate">
                 {gameState.lastWordRevealed || gameState.hint?.displayed.replace(/\s+/g, '') || 'DRAW!'}
               </span>
             </div>
           ) : (
-            <div className="flex flex-col items-center">
-              <div className="flex items-center gap-2">
-                <span className="text-xl sm:text-2xl font-mono font-black tracking-widest text-brand-300">
-                  {gameState.hint?.displayed || '_ _ _ _'}
-                </span>
-                <span className="text-xs text-slate-400 font-semibold bg-slate-800 px-2 py-0.5 rounded-full border border-slate-700">
-                  {gameState.hint?.letterCount || 0} letters
-                </span>
-              </div>
+            <div className="flex items-center gap-1 sm:gap-2 justify-center">
+              <span className="text-base sm:text-xl font-mono font-black tracking-widest text-blue-600 dark:text-blue-400">
+                {gameState.hint?.displayed || '_ _ _ _'}
+              </span>
+              <span className="text-[9px] sm:text-[10px] text-gray-500 dark:text-slate-400 font-bold bg-gray-100 dark:bg-slate-800 border border-gray-300 dark:border-slate-700 px-1.5 py-0.5 rounded-full shrink-0">
+                {gameState.hint?.letterCount || 0}
+              </span>
               {gameState.hint?.category && (
-                <span className="text-[11px] font-semibold text-slate-400 mt-0.5">
-                  Category: <span className="text-indigo-400">{gameState.hint.category}</span>
+                <span className="text-[9px] text-gray-400 dark:text-slate-500 hidden sm:inline">
+                  ({gameState.hint.category})
                 </span>
               )}
             </div>
           )
         ) : gameState.phase === 'ROUND_END' ? (
-          <div className="flex items-center gap-2 text-sm font-bold text-emerald-400">
+          <div className="flex items-center gap-1 text-xs sm:text-sm font-bold text-green-600 dark:text-green-400">
             <span>Word was:</span>
-            <span className="text-lg font-black text-white underline decoration-emerald-500">
+            <span className="text-xs sm:text-base font-black text-gray-900 dark:text-white underline decoration-green-500">
               {gameState.lastWordRevealed}
             </span>
           </div>
         ) : (
-          <span className="text-sm font-bold text-slate-400">Game Over</span>
+          <span className="text-xs font-bold text-gray-500 dark:text-slate-400">Game Over</span>
         )}
       </div>
 
-      {/* 3. Authoritative Timer */}
-      <div className="flex items-center gap-2">
+      {/* Timer */}
+      <div className="flex items-center gap-1 shrink-0">
         <div
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-mono font-black text-sm sm:text-base border transition-all ${
+          className={`flex items-center gap-1 px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-full font-mono font-black text-xs sm:text-sm border transition-all ${
             isUrgent
-              ? 'bg-rose-500/20 text-rose-400 border-rose-500/50 animate-pulse'
-              : 'bg-slate-800 text-slate-200 border-slate-700'
+              ? 'bg-red-50 dark:bg-red-950/60 text-red-500 dark:text-red-400 border-red-400 dark:border-red-500 animate-timer-urgent'
+              : 'bg-gray-100 dark:bg-slate-800 text-gray-700 dark:text-slate-200 border-gray-300 dark:border-slate-700'
           }`}
         >
-          <Clock className={`w-4 h-4 ${isUrgent ? 'text-rose-400' : 'text-slate-400'}`} />
+          <Clock className={`w-3 h-3 sm:w-3.5 sm:h-3.5 ${isUrgent ? 'text-red-500 dark:text-red-400' : 'text-gray-500 dark:text-slate-400'}`} />
           <span>{time}s</span>
         </div>
       </div>

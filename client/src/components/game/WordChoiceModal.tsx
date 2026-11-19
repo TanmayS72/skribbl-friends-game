@@ -16,32 +16,33 @@ export const WordChoiceModal: React.FC = () => {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-in fade-in">
-      <div className="bg-slate-900 border border-slate-700/80 rounded-3xl p-6 sm:p-8 max-w-xl w-full shadow-2xl text-center">
-        <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-brand-500/20 text-brand-300 text-xs font-bold border border-brand-500/30 mb-3">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 dark:bg-slate-950/80 backdrop-blur-sm animate-in fade-in select-none">
+      <div className="bg-white dark:bg-slate-900 border-2 border-blue-500 dark:border-blue-500/60 rounded-2xl p-5 sm:p-7 max-w-lg w-full shadow-2xl text-center">
+        <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-100 dark:bg-blue-900/60 text-blue-700 dark:text-blue-300 text-xs font-bold border border-blue-300 dark:border-blue-700 mb-2">
           <Sparkles className="w-3.5 h-3.5" />
           <span>YOUR TURN TO DRAW</span>
         </div>
 
-        <h2 className="text-2xl sm:text-3xl font-black text-white mb-2">
+        <h2 className="text-xl sm:text-2xl font-black text-gray-900 dark:text-white mb-1">
           Choose a Word to Draw
         </h2>
 
-        <p className="text-slate-400 text-xs sm:text-sm mb-6 flex items-center justify-center gap-1.5 font-medium">
-          <Clock className="w-4 h-4 text-amber-400" />
-          <span>Select within <strong className="text-white font-mono">{gameState.timeRemaining}s</strong> or a word will be picked for you</span>
+        <p className="text-gray-500 dark:text-slate-400 text-xs sm:text-sm mb-5 flex items-center justify-center gap-1.5 font-medium">
+          <Clock className="w-3.5 h-3.5 text-amber-500" />
+          <span>Select within <strong className="text-gray-900 dark:text-white font-mono">{gameState.timeRemaining}s</strong></span>
         </p>
 
         {/* Word Choice Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 sm:gap-3">
           {wordChoices.map((word) => (
             <button
               key={word}
+              type="button"
               onClick={() => handleSelect(word)}
-              className="p-5 sm:p-6 rounded-2xl bg-gradient-to-b from-slate-800 to-slate-800/60 hover:from-brand-600 hover:to-indigo-600 border border-slate-700 hover:border-brand-400 text-white font-extrabold text-lg sm:text-xl shadow-lg transition-all transform hover:-translate-y-1 hover:shadow-brand-500/20 active:scale-95 group flex flex-col items-center justify-center gap-2"
+              className="p-4 sm:p-5 rounded-xl bg-gray-50 dark:bg-slate-800 hover:bg-blue-500 hover:text-white border-2 border-gray-200 dark:border-slate-700 hover:border-blue-600 text-gray-800 dark:text-slate-100 font-extrabold text-base sm:text-lg shadow-sm transition-all transform hover:-translate-y-0.5 active:scale-95 group flex flex-col items-center justify-center gap-1"
             >
               <span className="tracking-wide group-hover:scale-105 transition-transform">{word}</span>
-              <span className="text-[11px] font-semibold text-slate-400 group-hover:text-brand-200">
+              <span className="text-[10px] font-semibold text-gray-400 dark:text-slate-400 group-hover:text-blue-100">
                 {word.length} letters
               </span>
             </button>

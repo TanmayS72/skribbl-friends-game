@@ -5,9 +5,33 @@ import { sanitizeNickname } from '../utils/sanitizer.js';
 
 export function setupSocketHandlers(io: Server, roomManager: RoomManager) {
   io.on('connection', (socket: Socket) => {
+    // 0. Leave Room (explicitly initiated by player)
+    socket.on('leave_room', (...args) => {
+      const callback = typeof args[args.length - 1] === 'function' ? args[args.length - 1] : undefined;
+      try {
+        const result = roomManager.leaveRoom(socket.id);
+        if (result) {
+          socket.leave(result.roomId);
+        }
+        if (typeof callback === 'function') {
+          callback({ success: true });
+        }
+      } catch (err: any) {
+        if (typeof callback === 'function') {
+          callback({ success: false, error: err.message });
+        }
+      }
+    });
+
     // 1. Create Room
     socket.on('create_room', (playerData: { id: string; nickname: string; avatar: string; color: string }, callback) => {
       try {
+        // If socket is already in an existing room, cleanly leave it first
+        const current = roomManager.leaveRoom(socket.id);
+        if (current) {
+          socket.leave(current.roomId);
+        }
+
         const hostPlayer: Player = {
           id: playerData.id || socket.id,
           socketId: socket.id,
@@ -39,6 +63,17 @@ export function setupSocketHandlers(io: Server, roomManager: RoomManager) {
     socket.on('join_room', (data: { roomId: string; player: { id: string; nickname: string; avatar: string; color: string } }, callback) => {
       try {
         const { roomId, player: pData } = data;
+        const targetRoomId = (roomId || '').toUpperCase().trim();
+
+        // If socket is in a DIFFERENT room, leave it first
+        const currentMapping = roomManager.getPlayerRoom(socket.id);
+        if (currentMapping && currentMapping.roomId !== targetRoomId) {
+          const left = roomManager.leaveRoom(socket.id);
+          if (left) {
+            socket.leave(left.roomId);
+          }
+        }
+
         const newPlayer: Player = {
           id: pData.id || socket.id,
           socketId: socket.id,
@@ -53,7 +88,7 @@ export function setupSocketHandlers(io: Server, roomManager: RoomManager) {
           hasGuessed: false,
         };
 
-        const result = roomManager.joinRoom(roomId, newPlayer);
+        const result = roomManager.joinRoom(targetRoomId, newPlayer);
         if (!result.success || !result.room) {
           if (typeof callback === 'function') {
             callback({ success: false, error: result.error });

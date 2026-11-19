@@ -1,6 +1,8 @@
+process.env.PORT = '4055';
+await import('./dist/index.js');
 import { io } from '../client/node_modules/socket.io-client/build/esm/index.js';
 
-const SERVER_URL = 'http://localhost:4000';
+const SERVER_URL = 'http://localhost:4055';
 
 async function runComprehensiveTest() {
   console.log('🧪 Starting Comprehensive Multiplayer & Drawing Test Suite...\n');

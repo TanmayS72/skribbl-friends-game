@@ -158,7 +158,19 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const onKicked = (reason: string) => {
       setRoom(null);
       setGameState(null);
+      setChatMessages([]);
+      setWordChoices(null);
+      setLatestDrawAction(null);
+      setCanvasSnapshot(null);
       setError(reason || 'You were kicked from the room.');
+
+      try {
+        const url = new URL(window.location.href);
+        if (url.searchParams.has('room')) {
+          url.searchParams.delete('room');
+          window.history.replaceState({}, document.title, url.pathname + (url.search ? url.search : ''));
+        }
+      } catch (e) {}
     };
 
     socket.on('connect', onConnect);
@@ -188,14 +200,33 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
   }, [socket]);
 
+  // In-flight request guards
+  const isCreatingRoomRef = React.useRef(false);
+  const isJoiningRoomRef = React.useRef(false);
+
   // Actions
   const createRoom = useCallback(async (): Promise<string | null> => {
+    if (isCreatingRoomRef.current) return null;
+    isCreatingRoomRef.current = true;
+    clearError();
+
     return new Promise((resolve) => {
       socket.emit('create_room', profile, (response: any) => {
+        isCreatingRoomRef.current = false;
         if (response && response.success) {
           setRoom(response.room);
           setGameState(response.room.gameState);
           setChatMessages([]);
+          setWordChoices(null);
+          setLatestDrawAction(null);
+          setCanvasSnapshot(null);
+
+          try {
+            const url = new URL(window.location.href);
+            url.searchParams.set('room', response.room.id);
+            window.history.replaceState({}, document.title, url.pathname + url.search);
+          } catch (e) {}
+
           resolve(response.room.id);
         } else {
           setError(response?.error || 'Failed to create room');
@@ -206,12 +237,33 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [socket, profile]);
 
   const joinRoom = useCallback(async (roomId: string): Promise<boolean> => {
+    if (isJoiningRoomRef.current) return false;
+    isJoiningRoomRef.current = true;
+    clearError();
+
+    const cleanRoomId = (roomId || '').toUpperCase().trim();
+    if (!cleanRoomId) {
+      isJoiningRoomRef.current = false;
+      return false;
+    }
+
     return new Promise((resolve) => {
-      socket.emit('join_room', { roomId, player: profile }, (response: any) => {
+      socket.emit('join_room', { roomId: cleanRoomId, player: profile }, (response: any) => {
+        isJoiningRoomRef.current = false;
         if (response && response.success) {
           setRoom(response.room);
           setGameState(response.room.gameState);
           setChatMessages([]);
+          setWordChoices(null);
+          setLatestDrawAction(null);
+          setCanvasSnapshot(null);
+
+          try {
+            const url = new URL(window.location.href);
+            url.searchParams.set('room', response.room.id);
+            window.history.replaceState({}, document.title, url.pathname + url.search);
+          } catch (e) {}
+
           resolve(true);
         } else {
           setError(response?.error || 'Failed to join room');
@@ -222,12 +274,24 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [socket, profile]);
 
   const leaveRoom = useCallback(() => {
+    socket.emit('leave_room');
+
     setRoom(null);
     setGameState(null);
     setChatMessages([]);
     setWordChoices(null);
-    window.location.hash = '';
-  }, []);
+    setLatestDrawAction(null);
+    setCanvasSnapshot(null);
+    clearError();
+
+    try {
+      const url = new URL(window.location.href);
+      if (url.searchParams.has('room')) {
+        url.searchParams.delete('room');
+        window.history.replaceState({}, document.title, url.pathname + (url.search ? url.search : ''));
+      }
+    } catch (e) {}
+  }, [socket]);
 
   const updateSettings = useCallback((settings: Partial<GameSettings>) => {
     if (!room) return;

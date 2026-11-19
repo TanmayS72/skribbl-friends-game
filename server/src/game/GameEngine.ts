@@ -443,6 +443,14 @@ export class GameEngine {
    */
   private advanceTurn(): void {
     this.clearTimer();
+
+    // Check if any connected players remain in the room
+    const activePlayers = Array.from(this.players.values()).filter(p => p.isConnected);
+    if (activePlayers.length === 0) {
+      this.clearTimer();
+      return;
+    }
+
     this.gameState.currentTurnIndex++;
 
     // Check if round finished

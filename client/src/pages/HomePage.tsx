@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Play, 
   PlusCircle, 
@@ -9,7 +9,9 @@ import {
   Smartphone, 
   Zap, 
   Trophy,
-  Users
+  Users,
+  AlertCircle,
+  X
 } from 'lucide-react';
 import { ProfileCard } from '../components/landing/ProfileCard.js';
 import { JoinModal } from '../components/landing/JoinModal.js';
@@ -22,29 +24,64 @@ interface HomePageProps {
 }
 
 export const HomePage: React.FC<HomePageProps> = ({ onStartPractice }) => {
-  const { createRoom, joinRoom } = useGame();
+  const { createRoom, joinRoom, error, clearError } = useGame();
   const [joinModalOpen, setJoinModalOpen] = useState(false);
   const [howToPlayOpen, setHowToPlayOpen] = useState(false);
   const [creating, setCreating] = useState(false);
+  const attemptedRef = useRef<string | null>(null);
 
   // Auto-detect room parameter from URL: e.g. ?room=ABCDEF
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const roomParam = params.get('room');
-    if (roomParam) {
-      joinRoom(roomParam.toUpperCase().trim());
+    const roomParam = params.get('room')?.toUpperCase().trim();
+    if (!roomParam) {
+      attemptedRef.current = null;
+      return;
+    }
+
+    if (attemptedRef.current !== roomParam) {
+      attemptedRef.current = roomParam;
+      joinRoom(roomParam).then((success) => {
+        if (!success) {
+          try {
+            const url = new URL(window.location.href);
+            url.searchParams.delete('room');
+            window.history.replaceState({}, document.title, url.pathname + (url.search ? url.search : ''));
+          } catch (e) {}
+        }
+      });
     }
   }, [joinRoom]);
 
   const handleCreateRoom = async () => {
+    if (creating) return;
     sounds.playPop();
     setCreating(true);
-    await createRoom();
-    setCreating(false);
+    try {
+      await createRoom();
+    } finally {
+      setCreating(false);
+    }
   };
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-8 sm:py-12 animate-in fade-in select-none">
+      {/* Error notification banner if invite or join failed */}
+      {error && (
+        <div className="mb-6 p-4 rounded-2xl bg-rose-500/20 border border-rose-500/40 flex items-center justify-between text-rose-300 text-sm shadow-lg backdrop-blur-md animate-in fade-in">
+          <div className="flex items-center gap-3">
+            <AlertCircle className="w-5 h-5 shrink-0 text-rose-400" />
+            <span className="font-semibold">{error}</span>
+          </div>
+          <button
+            onClick={clearError}
+            className="p-1 rounded-lg hover:bg-rose-500/30 text-rose-300 hover:text-white transition-colors"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
       {/* Hero Section */}
       <div className="text-center mb-10 sm:mb-12 relative">
         <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-brand-500/10 border border-brand-500/20 text-brand-300 text-xs sm:text-sm font-bold mb-4 backdrop-blur-md">

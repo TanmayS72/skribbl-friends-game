@@ -154,7 +154,7 @@ export class DrawingEngine {
   }
 
   /**
-   * High performance 32-bit Scanline / BFS flood fill.
+   * High performance 32-bit typed-array BFS flood fill with zero object allocations in hot loop.
    */
   public floodFill(startX: number, startY: number, fillColorHex: string): void {
     const width = VIRTUAL_WIDTH;
@@ -172,12 +172,7 @@ export class DrawingEngine {
 
     if (targetColor32 === fillUint32) return;
 
-    // BFS queue
-    const queue: [number, number][] = [[sx, sy]];
-    const visited = new Uint8Array(width * height);
-    visited[sy * width + sx] = 1;
-
-    // Tolerance check for anti-aliasing blending
+    // Fast color component extraction
     const tr = targetColor32 & 0xFF;
     const tg = (targetColor32 >> 8) & 0xFF;
     const tb = (targetColor32 >> 16) & 0xFF;
@@ -186,36 +181,59 @@ export class DrawingEngine {
       const r = color & 0xFF;
       const g = (color >> 8) & 0xFF;
       const b = (color >> 16) & 0xFF;
-      // Allow a small color delta tolerance (up to 32)
-      return Math.abs(r - tr) + Math.abs(g - tg) + Math.abs(b - tb) < 35;
+      return (Math.abs(r - tr) + Math.abs(g - tg) + Math.abs(b - tb)) < 35;
     };
 
+    // Pre-allocated flat Int32Array queue to eliminate all heap allocations
+    const totalPixels = width * height;
+    const queue = new Int32Array(totalPixels);
+    const visited = new Uint8Array(totalPixels);
+
     let head = 0;
-    while (head < queue.length) {
-      const [x, y] = queue[head++];
-      const idx = y * width + x;
+    let tail = 0;
+
+    const startIdx = sy * width + sx;
+    queue[tail++] = startIdx;
+    visited[startIdx] = 1;
+
+    while (head < tail) {
+      const idx = queue[head++];
       data32[idx] = fillUint32;
 
-      // 4-way neighbors
-      const neighbors: [number, number][] = [
-        [x + 1, y],
-        [x - 1, y],
-        [x, y + 1],
-        [x, y - 1],
-      ];
+      const x = idx % width;
+      const y = (idx / width) | 0;
 
-      for (let i = 0; i < 4; i++) {
-        const nx = neighbors[i][0];
-        const ny = neighbors[i][1];
-
-        if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
-          const nidx = ny * width + nx;
-          if (visited[nidx] === 0) {
-            visited[nidx] = 1;
-            if (matchesTarget(data32[nidx])) {
-              queue.push([nx, ny]);
-            }
-          }
+      // Check 4-connected neighbors without array allocations
+      // East (x + 1)
+      if (x + 1 < width) {
+        const nidx = idx + 1;
+        if (visited[nidx] === 0) {
+          visited[nidx] = 1;
+          if (matchesTarget(data32[nidx])) queue[tail++] = nidx;
+        }
+      }
+      // West (x - 1)
+      if (x - 1 >= 0) {
+        const nidx = idx - 1;
+        if (visited[nidx] === 0) {
+          visited[nidx] = 1;
+          if (matchesTarget(data32[nidx])) queue[tail++] = nidx;
+        }
+      }
+      // South (y + 1)
+      if (y + 1 < height) {
+        const nidx = idx + width;
+        if (visited[nidx] === 0) {
+          visited[nidx] = 1;
+          if (matchesTarget(data32[nidx])) queue[tail++] = nidx;
+        }
+      }
+      // North (y - 1)
+      if (y - 1 >= 0) {
+        const nidx = idx - width;
+        if (visited[nidx] === 0) {
+          visited[nidx] = 1;
+          if (matchesTarget(data32[nidx])) queue[tail++] = nidx;
         }
       }
     }

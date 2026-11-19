@@ -121,6 +121,69 @@ export class RoomManager {
     return this.rooms.get(roomId.toUpperCase().trim());
   }
 
+  public getPlayerRoom(socketId: string): { roomId: string; playerId: string } | undefined {
+    return this.socketToPlayerMap.get(socketId);
+  }
+
+  public leaveRoom(socketId: string): { roomId: string; playerId: string; roomDeleted: boolean } | null {
+    const mapping = this.socketToPlayerMap.get(socketId);
+    if (!mapping) return null;
+
+    const { roomId, playerId } = mapping;
+    this.socketToPlayerMap.delete(socketId);
+
+    const room = this.rooms.get(roomId);
+    if (!room) return null;
+
+    const player = room.players.get(playerId);
+    const playerName = player ? player.nickname : 'A player';
+
+    // Remove player from active room
+    room.players.delete(playerId);
+    room.lastActiveAt = Date.now();
+
+    // Check how many players are still connected
+    const remainingConnected = Array.from(room.players.values()).filter(p => p.isConnected);
+
+    // If nobody remains, clean up room and game timer immediately
+    if (remainingConnected.length === 0) {
+      room.gameEngine.clearTimer();
+      this.rooms.delete(roomId);
+      return { roomId, playerId, roomDeleted: true };
+    }
+
+    // Inform game engine if game was active
+    room.gameEngine.handlePlayerDisconnect(playerId);
+
+    // If host left, migrate host to next connected player
+    if (room.hostId === playerId) {
+      const nextHost = remainingConnected[0];
+      if (nextHost) {
+        room.hostId = nextHost.id;
+        nextHost.isHost = true;
+        this.io.to(roomId).emit('chat_message', {
+          id: Math.random().toString(36).substring(2, 9),
+          senderName: 'Game',
+          text: `${nextHost.nickname} is now the host.`,
+          type: 'system',
+          timestamp: Date.now(),
+        });
+      }
+    }
+
+    // Broadcast updated room data and leave message
+    this.io.to(roomId).emit('room_data', room.toJSON());
+    this.io.to(roomId).emit('chat_message', {
+      id: Math.random().toString(36).substring(2, 9),
+      senderName: 'Game',
+      text: `${playerName} left the room.`,
+      type: 'leave',
+      timestamp: Date.now(),
+    });
+
+    return { roomId, playerId, roomDeleted: false };
+  }
+
   public joinRoom(roomId: string, player: Player): { success: boolean; room?: Room; error?: string } {
     const cleanId = roomId.toUpperCase().trim();
     const room = this.rooms.get(cleanId);
@@ -176,6 +239,12 @@ export class RoomManager {
     player.isConnected = false;
     room.lastActiveAt = Date.now();
 
+    // If all players in room are disconnected, clear timer so it doesn't spin
+    const anyConnected = Array.from(room.players.values()).some(p => p.isConnected);
+    if (!anyConnected) {
+      room.gameEngine.clearTimer();
+    }
+
     // Notify game engine
     room.gameEngine.handlePlayerDisconnect(playerId);
 
@@ -217,6 +286,11 @@ export class RoomManager {
     this.io.to(targetPlayer.socketId).emit('kicked', 'You were removed from the room by the host.');
     room.players.delete(targetPlayerId);
     this.socketToPlayerMap.delete(targetPlayer.socketId);
+
+    const targetSocket = this.io.sockets.sockets.get(targetPlayer.socketId);
+    if (targetSocket) {
+      targetSocket.leave(roomId);
+    }
 
     this.io.to(roomId).emit('room_data', room.toJSON());
     this.io.to(roomId).emit('chat_message', {

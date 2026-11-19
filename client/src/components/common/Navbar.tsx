@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Volume2, VolumeX, Moon, Sun, Maximize2, Minimize2, Share2, Copy, Check, Palette } from 'lucide-react';
+import { Volume2, VolumeX, Moon, Sun, Maximize2, Minimize2, Copy, Check, Palette } from 'lucide-react';
 import { useGame } from '../../context/GameContext.js';
 import { sounds } from '../../audio/SoundEngine.js';
 
@@ -10,10 +10,12 @@ interface NavbarProps {
 }
 
 export const Navbar: React.FC<NavbarProps> = ({ darkMode, setDarkMode, onGoHome }) => {
-  const { room, leaveRoom } = useGame();
+  const { room, leaveRoom, gameState } = useGame();
   const [isMuted, setIsMuted] = useState(sounds.getMuted());
   const [copied, setCopied] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+
+  const isInGame = Boolean(room && gameState && gameState.phase !== 'LOBBY' && gameState.phase !== 'GAME_OVER');
 
   const toggleSound = () => {
     const muted = sounds.toggleMute();
@@ -40,45 +42,52 @@ export const Navbar: React.FC<NavbarProps> = ({ darkMode, setDarkMode, onGoHome 
     });
   };
 
+  const handleLogoClick = () => {
+    if (room) {
+      leaveRoom();
+    }
+    if (onGoHome) {
+      onGoHome();
+    }
+  };
+
   return (
-    <header className="w-full bg-slate-900/80 backdrop-blur-md border-b border-slate-800/80 sticky top-0 z-40 transition-colors">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
+    <header className={`w-full bg-white dark:bg-slate-900 border-b-2 border-blue-500 dark:border-blue-600/70 sticky top-0 z-40 shadow-sm transition-colors ${
+      isInGame ? 'h-10 sm:h-12' : 'h-12 sm:h-14'
+    }`}>
+      <div className="max-w-7xl mx-auto px-2 sm:px-6 h-full flex items-center justify-between gap-1.5 sm:gap-2">
         {/* Brand / Logo */}
-        <div 
-          onClick={onGoHome || leaveRoom}
-          className="flex items-center gap-2.5 cursor-pointer group select-none"
+        <div
+          onClick={handleLogoClick}
+          className="flex items-center gap-1.5 sm:gap-2 cursor-pointer select-none shrink-0"
         >
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-brand-600 via-indigo-500 to-accent-pink flex items-center justify-center shadow-lg shadow-brand-500/30 group-hover:scale-105 transition-transform">
-            <Palette className="w-5 h-5 text-white" />
+          <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-blue-500 flex items-center justify-center shadow-md">
+            <Palette className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
           </div>
-          <div>
-            <span className="text-xl font-extrabold tracking-tight bg-gradient-to-r from-brand-400 via-indigo-300 to-accent-pink bg-clip-text text-transparent">
-              Doodle<span className="text-white">Dash</span>
-            </span>
-            <span className="hidden sm:inline-block ml-2 text-xs font-semibold px-2 py-0.5 rounded-full bg-brand-500/20 text-brand-300 border border-brand-500/30">
-              Live Multiplayer
-            </span>
-          </div>
+          <span className="text-base sm:text-lg font-extrabold tracking-tight text-blue-600 dark:text-blue-400 font-game">
+            Doodle<span className="text-gray-800 dark:text-white">Dash</span>
+          </span>
         </div>
 
-        {/* Room Code Badge (if inside a room) */}
+        {/* Room Code Badge */}
         {room && (
-          <div className="flex items-center gap-2 bg-slate-800/90 border border-slate-700/80 rounded-xl px-3 py-1.5 shadow-inner">
-            <span className="text-xs font-medium text-slate-400 uppercase tracking-wider hidden sm:inline">Room:</span>
-            <span className="font-mono font-bold text-brand-300 tracking-widest text-sm sm:text-base">{room.id}</span>
+          <div className="flex items-center gap-1 sm:gap-1.5 bg-blue-50 dark:bg-slate-800 border sm:border-2 border-blue-400 dark:border-blue-500/50 rounded-md sm:rounded-lg px-1.5 sm:px-2.5 py-0.5 sm:py-1">
+            <span className="text-[10px] sm:text-xs font-medium text-blue-600 dark:text-blue-300 uppercase tracking-wider hidden sm:inline">Room:</span>
+            <span className="font-mono font-bold text-blue-700 dark:text-blue-300 tracking-wider text-xs sm:text-sm">{room.id}</span>
             <button
+              type="button"
               onClick={copyRoomLink}
-              title="Copy room invite link"
-              className="ml-1 p-1 rounded-lg bg-slate-700/60 hover:bg-brand-600 text-slate-300 hover:text-white transition-all flex items-center gap-1 text-xs"
+              title="Copy invite link"
+              className="ml-0.5 sm:ml-1 p-0.5 sm:p-1 rounded bg-blue-100 dark:bg-blue-900/50 hover:bg-blue-500 hover:text-white text-blue-600 dark:text-blue-300 transition-colors flex items-center gap-0.5 text-[10px] sm:text-xs"
             >
               {copied ? (
                 <>
-                  <Check className="w-3.5 h-3.5 text-emerald-400" />
-                  <span className="text-emerald-400 hidden md:inline">Copied!</span>
+                  <Check className="w-3 h-3 text-green-600 dark:text-green-400" />
+                  <span className="text-green-600 dark:text-green-400 hidden md:inline">Copied!</span>
                 </>
               ) : (
                 <>
-                  <Copy className="w-3.5 h-3.5" />
+                  <Copy className="w-3 h-3" />
                   <span className="hidden md:inline">Invite</span>
                 </>
               )}
@@ -87,39 +96,39 @@ export const Navbar: React.FC<NavbarProps> = ({ darkMode, setDarkMode, onGoHome 
         )}
 
         {/* Action Controls */}
-        <div className="flex items-center gap-2">
-          {/* Sound Toggle */}
+        <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
           <button
+            type="button"
             onClick={toggleSound}
-            title={isMuted ? "Unmute sounds" : "Mute sounds"}
-            className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700/50 transition-all hover:scale-105 active:scale-95"
+            title={isMuted ? 'Unmute sounds' : 'Mute sounds'}
+            className="p-1 sm:p-1.5 rounded-md sm:rounded-lg bg-gray-100 dark:bg-slate-800 hover:bg-gray-200 dark:hover:bg-slate-700 text-gray-600 dark:text-slate-300 transition-colors"
           >
-            {isMuted ? <VolumeX className="w-5 h-5 text-red-400" /> : <Volume2 className="w-5 h-5 text-emerald-400" />}
+            {isMuted ? <VolumeX className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-red-500" /> : <Volume2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-green-600 dark:text-green-400" />}
           </button>
 
-          {/* Theme Toggle */}
           <button
+            type="button"
             onClick={() => setDarkMode(prev => !prev)}
-            title={darkMode ? "Switch to light mode" : "Switch to dark mode"}
-            className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700/50 transition-all hover:scale-105 active:scale-95"
+            title={darkMode ? 'Light mode' : 'Dark mode'}
+            className="p-1 sm:p-1.5 rounded-md sm:rounded-lg bg-gray-100 dark:bg-slate-800 hover:bg-gray-200 dark:hover:bg-slate-700 text-gray-600 dark:text-slate-300 transition-colors"
           >
-            {darkMode ? <Sun className="w-5 h-5 text-amber-400" /> : <Moon className="w-5 h-5 text-indigo-400" />}
+            {darkMode ? <Sun className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-400" /> : <Moon className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-indigo-500" />}
           </button>
 
-          {/* Fullscreen Toggle */}
           <button
+            type="button"
             onClick={toggleFullscreen}
             title="Toggle fullscreen"
-            className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700/50 transition-all hover:scale-105 active:scale-95 hidden sm:block"
+            className="p-1 sm:p-1.5 rounded-md sm:rounded-lg bg-gray-100 dark:bg-slate-800 hover:bg-gray-200 dark:hover:bg-slate-700 text-gray-600 dark:text-slate-300 transition-colors hidden sm:block"
           >
-            {isFullscreen ? <Minimize2 className="w-5 h-5" /> : <Maximize2 className="w-5 h-5" />}
+            {isFullscreen ? <Minimize2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> : <Maximize2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />}
           </button>
 
-          {/* Leave Room Button */}
           {room && (
             <button
+              type="button"
               onClick={leaveRoom}
-              className="text-xs font-semibold px-3 py-2 rounded-xl bg-rose-500/20 hover:bg-rose-500 text-rose-300 hover:text-white border border-rose-500/30 transition-all active:scale-95 ml-1"
+              className="text-[11px] sm:text-xs font-bold px-2 sm:px-2.5 py-1 rounded-md sm:rounded-lg bg-red-50 dark:bg-red-950/60 hover:bg-red-500 hover:text-white text-red-500 dark:text-red-400 border border-red-300 dark:border-red-600/50 transition-colors ml-0.5"
             >
               Leave
             </button>

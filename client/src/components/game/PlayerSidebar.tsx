@@ -1,5 +1,5 @@
 import React from 'react';
-import { Crown, Paintbrush, Check, Users } from 'lucide-react';
+import { Crown, Paintbrush, Check } from 'lucide-react';
 import { useGame } from '../../context/GameContext.js';
 
 export const PlayerSidebar: React.FC = () => {
@@ -7,22 +7,20 @@ export const PlayerSidebar: React.FC = () => {
 
   if (!room || !gameState) return null;
 
-  // Sort players descending by score
   const players = Object.values(room.players).sort((a, b) => b.score - a.score);
 
   return (
-    <div className="w-full bg-slate-900/90 border border-slate-700/80 rounded-2xl p-3 sm:p-4 shadow-xl backdrop-blur-md flex flex-col h-full max-h-[640px]">
-      <div className="flex items-center justify-between pb-3 mb-2 border-b border-slate-800">
-        <div className="flex items-center gap-2">
-          <Users className="w-4 h-4 text-brand-400" />
-          <h3 className="font-extrabold text-white text-sm">Leaderboard</h3>
-        </div>
-        <span className="text-xs text-slate-400 font-semibold">
-          {players.filter(p => p.isConnected).length} Players
+    <div className="w-full bg-white dark:bg-slate-900 border-2 border-blue-400 dark:border-blue-600/60 flex flex-col h-full overflow-hidden shadow-xs">
+      {/* Header */}
+      <div className="bg-blue-500 px-2.5 py-1 sm:py-1.5 flex items-center justify-between shrink-0">
+        <h3 className="font-extrabold text-white text-[11px] sm:text-xs uppercase tracking-wider">Players</h3>
+        <span className="text-[10px] sm:text-xs text-blue-100 font-semibold">
+          {players.filter(p => p.isConnected).length} online
         </span>
       </div>
 
-      <div className="flex-1 overflow-y-auto space-y-2 pr-1">
+      {/* Player rows */}
+      <div className="flex-1 overflow-y-auto divide-y divide-gray-100 dark:divide-slate-800/80">
         {players.map((p, index) => {
           const isMe = p.id === profile.id;
           const isDrawer = p.id === gameState.currentDrawerId;
@@ -32,72 +30,67 @@ export const PlayerSidebar: React.FC = () => {
           return (
             <div
               key={p.id}
-              className={`p-2.5 rounded-xl border transition-all flex items-center justify-between relative ${
+              className={`flex items-center px-1.5 py-1 sm:px-2 sm:py-1.5 transition-colors ${
                 hasGuessed
-                  ? 'bg-emerald-950/30 border-emerald-500/40 shadow-emerald-500/5'
+                  ? 'bg-green-50 dark:bg-emerald-950/40 text-green-900 dark:text-emerald-200'
                   : isDrawer
-                  ? 'bg-brand-950/40 border-brand-500/40'
-                  : 'bg-slate-800/70 border-slate-700/60'
-              } ${!p.isConnected ? 'opacity-40' : ''}`}
+                  ? 'bg-blue-50 dark:bg-blue-950/40 text-blue-900 dark:text-blue-200'
+                  : index % 2 === 0
+                  ? 'bg-white dark:bg-slate-900'
+                  : 'bg-gray-50/80 dark:bg-slate-800/50'
+              } ${!p.isConnected ? 'opacity-40' : ''} ${isMe ? 'ring-1 ring-inset ring-blue-400' : ''}`}
             >
-              {/* Left: Rank, Avatar, Name */}
-              <div className="flex items-center gap-2.5 min-w-0">
-                <span className="font-mono text-xs font-bold text-slate-400 w-4 text-center">
-                  #{index + 1}
-                </span>
+              {/* Rank */}
+              <span className="font-mono text-[9px] sm:text-[10px] font-bold text-gray-400 dark:text-slate-500 w-3.5 text-center shrink-0">
+                {index + 1}
+              </span>
 
-                <div
-                  className="w-9 h-9 rounded-lg flex items-center justify-center text-lg relative shrink-0"
-                  style={{ backgroundColor: p.color + '25', border: `1.5px solid ${p.color}` }}
-                >
-                  <span>{p.avatar}</span>
-                  {p.isHost && (
-                    <div className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-amber-400 text-slate-900 flex items-center justify-center shadow">
-                      <Crown className="w-2.5 h-2.5 fill-slate-900" />
-                    </div>
+              {/* Avatar */}
+              <div
+                className="w-6 h-6 sm:w-7 sm:h-7 rounded-full flex items-center justify-center text-xs sm:text-sm mx-1 shrink-0 relative shadow-2xs"
+                style={{ backgroundColor: p.color + '30', border: `1.5px solid ${p.color}` }}
+              >
+                <span>{p.avatar}</span>
+                {p.isHost && (
+                  <div className="absolute -top-1 -right-1 w-3 h-3 rounded-full bg-amber-400 flex items-center justify-center shadow-xs">
+                    <Crown className="w-2 h-2 fill-white text-white" />
+                  </div>
+                )}
+              </div>
+
+              {/* Name & Score */}
+              <div className="flex-1 min-w-0 pr-1">
+                <div className="flex items-center gap-1">
+                  <span className="font-bold text-[10px] sm:text-[11px] text-gray-800 dark:text-slate-200 truncate max-w-[85px] sm:max-w-[130px]">
+                    {p.nickname}
+                  </span>
+                  {isMe && (
+                    <span className="text-[7px] sm:text-[8px] font-black px-1 py-0.2 rounded bg-blue-100 dark:bg-blue-900/60 text-blue-600 dark:text-blue-300 shrink-0">
+                      YOU
+                    </span>
                   )}
                 </div>
-
-                <div className="min-w-0">
-                  <div className="flex items-center gap-1.5 truncate">
-                    <span className="font-bold text-xs sm:text-sm text-white truncate">
-                      {p.nickname}
+                <div className="flex items-center gap-1 text-[9px] sm:text-[10px] leading-tight">
+                  <span className="font-bold text-gray-700 dark:text-slate-400">{p.score} pts</span>
+                  {roundScore ? (
+                    <span className="text-green-600 dark:text-emerald-400 font-bold text-[8px] sm:text-[9px] animate-score-bounce">
+                      +{roundScore}
                     </span>
-                    {isMe && (
-                      <span className="text-[9px] font-bold px-1 rounded bg-brand-500/30 text-brand-300">
-                        YOU
-                      </span>
-                    )}
-                  </div>
-
-                  <div className="flex items-center gap-1 text-[11px] text-slate-400">
-                    <span className="font-bold text-slate-300">{p.score} pts</span>
-                    {roundScore ? (
-                      <span className="text-emerald-400 font-bold text-[10px]">
-                        (+{roundScore})
-                      </span>
-                    ) : null}
-                  </div>
+                  ) : null}
                 </div>
               </div>
 
-              {/* Right status icon */}
-              <div className="flex items-center gap-1 shrink-0">
+              {/* Status icon */}
+              <div className="shrink-0">
                 {isDrawer && (
-                  <div
-                    title="Currently drawing"
-                    className="p-1 rounded-md bg-brand-500/20 text-brand-300 border border-brand-500/40"
-                  >
-                    <Paintbrush className="w-3.5 h-3.5 animate-bounce-subtle" />
-                  </div>
+                  <span title="Drawing">
+                    <Paintbrush className="w-3.5 h-3.5 text-blue-500 animate-bounce-subtle" />
+                  </span>
                 )}
                 {hasGuessed && !isDrawer && (
-                  <div
-                    title="Guessed correctly!"
-                    className="p-1 rounded-md bg-emerald-500/20 text-emerald-400 border border-emerald-500/40"
-                  >
-                    <Check className="w-3.5 h-3.5" />
-                  </div>
+                  <span title="Guessed!">
+                    <Check className="w-3.5 h-3.5 text-green-500 dark:text-emerald-400" />
+                  </span>
                 )}
               </div>
             </div>

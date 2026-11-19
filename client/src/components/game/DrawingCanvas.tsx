@@ -107,10 +107,15 @@ export const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     const engine = engineRef.current;
     if (!engine) return;
 
-    const pt = engine.getVirtualCoords(e.clientX, e.clientY);
+    // Support coalesced events for high-precision Apple Pencil / touch / stylus input
+    const nativeEvent = e.nativeEvent as PointerEvent;
+    const coalescedEvents = (typeof nativeEvent.getCoalescedEvents === 'function')
+      ? nativeEvent.getCoalescedEvents()
+      : [nativeEvent];
 
     // Shape preview drag on top preview layer
     if (shapeStartRef.current) {
+      const pt = engine.getVirtualCoords(e.clientX, e.clientY);
       const pCanvas = previewCanvasRef.current;
       if (!pCanvas) return;
       const pCtx = pCanvas.getContext('2d');
@@ -144,18 +149,28 @@ export const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
       return;
     }
 
-    // Normal stroke
-    currentPointsRef.current.push(pt);
+    // Normal stroke: process points (with deduplication for minimal overhead)
+    for (let i = 0; i < coalescedEvents.length; i++) {
+      const cEvent = coalescedEvents[i];
+      const pt = engine.getVirtualCoords(cEvent.clientX, cEvent.clientY);
+      const points = currentPointsRef.current;
+      const lastPt = points[points.length - 1];
 
-    // Incremental draw
-    const strokeAction: StrokeAction = {
-      type: 'stroke',
-      tool: currentTool as 'pencil' | 'brush' | 'eraser',
-      color: currentColor,
-      size: brushSize,
-      points: currentPointsRef.current.slice(-3), // last segment for smooth curve
-    };
-    engine.renderStroke(strokeAction);
+      // Skip duplicate zero-distance points to prevent memory bloat and redundant network payload
+      if (lastPt && lastPt.x === pt.x && lastPt.y === pt.y) continue;
+
+      points.push(pt);
+
+      // Incremental draw for silky smooth responsive rendering
+      const strokeAction: StrokeAction = {
+        type: 'stroke',
+        tool: currentTool as 'pencil' | 'brush' | 'eraser',
+        color: currentColor,
+        size: brushSize,
+        points: points.slice(-3),
+      };
+      engine.renderStroke(strokeAction);
+    }
   };
 
   // Pointer Up / Cancel
@@ -212,7 +227,7 @@ export const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
 
   return (
     <div
-      className={`relative w-full aspect-[3/2] bg-white rounded-2xl overflow-hidden shadow-2xl border-4 border-slate-700/60 select-none ${className}`}
+      className={`relative aspect-[3/2] max-w-full max-h-full bg-white overflow-hidden border-2 sm:border-4 border-blue-500 shadow-sm select-none ${className}`}
       style={{ touchAction: 'none' }}
     >
       {/* Main Persistent Canvas */}
