@@ -1,0 +1,554 @@
+import { Server } from 'socket.io';
+import { GameState, GameSettings, Player, WordHint, DrawAction, ChatMessage } from '../types/game.js';
+import { WordManager } from './WordManager.js';
+import { HintSystem } from './HintSystem.js';
+import { ScoringSystem } from './ScoringSystem.js';
+import { normalizeText, isCloseGuess, sanitizeChatMessage } from '../utils/sanitizer.js';
+
+export interface GameEngineCallbacks {
+  onStateUpdate: (state: GameState) => void;
+  onDrawerWordChoices: (drawerSocketId: string, choices: string[]) => void;
+  onChatMessage: (message: ChatMessage) => void;
+  onCloseGuessNotification: (socketId: string) => void;
+  onCanvasClear: () => void;
+  onSoundTrigger: (sound: string, targetSocketId?: string) => void;
+}
+
+export class GameEngine {
+  private roomId: string;
+  private settings: GameSettings;
+  private players: Map<string, Player>;
+  private gameState: GameState;
+  private wordManager: WordManager;
+  private hintSystem: HintSystem;
+  private callbacks: GameEngineCallbacks;
+
+  // Active turn state
+  private selectedWord: string = '';
+  private timerInterval: NodeJS.Timeout | null = null;
+  private guessTimes: number[] = []; // record timeRemaining when correct guesses occur
+  private drawHistory: DrawAction[] = [];
+
+  constructor(
+    roomId: string,
+    settings: GameSettings,
+    players: Map<string, Player>,
+    callbacks: GameEngineCallbacks
+  ) {
+    this.roomId = roomId;
+    this.settings = settings;
+    this.players = players;
+    this.callbacks = callbacks;
+    this.wordManager = new WordManager();
+    this.hintSystem = new HintSystem();
+
+    this.gameState = {
+      phase: 'LOBBY',
+      currentRound: 1,
+      totalRounds: settings.rounds,
+      currentDrawerId: null,
+      timeRemaining: 0,
+      totalTime: 0,
+      hint: null,
+      turnOrder: [],
+      currentTurnIndex: 0,
+      guessedPlayerIds: [],
+      currentWordLength: 0,
+      roundScores: {},
+    };
+  }
+
+  public getGameState(): GameState {
+    return { ...this.gameState };
+  }
+
+  public getDrawHistory(): DrawAction[] {
+    return this.drawHistory;
+  }
+
+  public addDrawAction(action: DrawAction): void {
+    if (action.type === 'clear') {
+      this.drawHistory = [];
+    } else {
+      this.drawHistory.push(action);
+    }
+  }
+
+  public undoLastDrawAction(): DrawAction | null {
+    if (this.drawHistory.length === 0) return null;
+    return this.drawHistory.pop() || null;
+  }
+
+  public clearDrawHistory(): void {
+    this.drawHistory = [];
+  }
+
+  public updateSettings(newSettings: GameSettings): void {
+    this.settings = newSettings;
+    this.gameState.totalRounds = newSettings.rounds;
+  }
+
+  /**
+   * Starts or restarts the game.
+   */
+  public startGame(): void {
+    // Generate randomized turn order from currently connected players
+    const connectedPlayerIds = Array.from(this.players.values())
+      .filter(p => p.isConnected)
+      .map(p => p.id);
+
+    if (connectedPlayerIds.length < 2) {
+      // In development or solo practice mode we can allow 1 player, but standard is >= 2
+      // We will allow starting even with 1 player for testing/solo practice!
+    }
+
+    // Shuffle players for fair turn order
+    this.gameState.turnOrder = [...connectedPlayerIds].sort(() => 0.5 - Math.random());
+    this.gameState.currentRound = 1;
+    this.gameState.currentTurnIndex = 0;
+    this.gameState.totalRounds = this.settings.rounds;
+    this.wordManager.resetUsedWords();
+
+    // Reset scores
+    this.players.forEach(p => {
+      p.score = 0;
+      p.roundScore = 0;
+      p.hasGuessed = false;
+    });
+
+    this.startTurn();
+  }
+
+  /**
+   * Starts a turn for the current drawer: presents word choices.
+   */
+  private startTurn(): void {
+    this.clearTimer();
+    this.drawHistory = [];
+    this.callbacks.onCanvasClear();
+    this.guessTimes = [];
+    this.gameState.guessedPlayerIds = [];
+    this.gameState.roundScores = {};
+
+    // Reset round scores and guessed status for this turn
+    this.players.forEach(p => {
+      p.roundScore = 0;
+      p.hasGuessed = false;
+    });
+
+    // Determine current drawer
+    const drawerId = this.gameState.turnOrder[this.gameState.currentTurnIndex];
+    const drawer = this.players.get(drawerId);
+
+    if (!drawer || !drawer.isConnected) {
+      // Drawer left, advance to next
+      this.advanceTurn();
+      return;
+    }
+
+    this.gameState.currentDrawerId = drawerId;
+    this.gameState.phase = 'CHOOSING_WORD';
+    this.gameState.timeRemaining = 15; // 15 seconds to pick a word
+    this.gameState.totalTime = 15;
+    this.gameState.hint = null;
+    this.gameState.lastWordRevealed = undefined;
+
+    // Pick 3 word choices
+    const count = this.settings.wordCount || 3;
+    const wordChoices = this.wordManager.getWordChoices(this.settings, count);
+    const choiceWords = wordChoices.map(c => c.word);
+
+    // Send word choices ONLY to the drawer's socket
+    this.callbacks.onDrawerWordChoices(drawer.socketId, choiceWords);
+
+    // Broadcast state update to everyone
+    this.broadcastState();
+
+    this.callbacks.onChatMessage({
+      id: Math.random().toString(36).substring(2, 9),
+      senderName: 'Game',
+      text: `${drawer.nickname} is choosing a word...`,
+      type: 'drawer',
+      timestamp: Date.now(),
+    });
+
+    // Start 15s countdown for word selection
+    this.timerInterval = setInterval(() => {
+      this.gameState.timeRemaining--;
+
+      if (this.gameState.timeRemaining <= 0) {
+        // Auto-select 1st word if drawer didn't pick in time
+        this.selectWord(choiceWords[0] || 'Apple');
+      } else {
+        this.broadcastState();
+      }
+    }, 1000);
+  }
+
+  /**
+   * Called when drawer clicks a word choice or when choice timer expires.
+   */
+  public selectWord(word: string): void {
+    if (this.gameState.phase !== 'CHOOSING_WORD') return;
+    this.clearTimer();
+
+    this.selectedWord = word;
+    this.gameState.phase = 'DRAWING';
+    this.gameState.timeRemaining = this.settings.drawTime;
+    this.gameState.totalTime = this.settings.drawTime;
+    this.gameState.currentWordLength = word.length;
+
+    // Initialize progressive hint
+    const initialHint = this.hintSystem.initialize(word, 'Category');
+    this.gameState.hint = initialHint;
+
+    const drawer = this.gameState.currentDrawerId ? this.players.get(this.gameState.currentDrawerId) : null;
+    this.callbacks.onChatMessage({
+      id: Math.random().toString(36).substring(2, 9),
+      senderName: 'Game',
+      text: `${drawer ? drawer.nickname : 'Drawer'} is now drawing!`,
+      type: 'drawer',
+      timestamp: Date.now(),
+    });
+
+    this.callbacks.onSoundTrigger('ROUND_START');
+    this.broadcastState();
+
+    // Start drawing timer
+    this.timerInterval = setInterval(() => {
+      this.gameState.timeRemaining--;
+
+      // Hints progressive reveal (if enabled in settings)
+      if (this.settings.hintsEnabled) {
+        const { hint, newlyRevealed } = this.hintSystem.update(
+          this.gameState.timeRemaining,
+          this.gameState.totalTime
+        );
+        this.gameState.hint = hint;
+        if (newlyRevealed) {
+          this.callbacks.onSoundTrigger('HINT_REVEAL');
+        }
+      }
+
+      // Check if time expired
+      if (this.gameState.timeRemaining <= 0) {
+        this.endTurn('Time is up!');
+      } else {
+        this.broadcastState();
+      }
+    }, 1000);
+  }
+
+  /**
+   * Handle incoming guess or chat message.
+   */
+  public handleChatGuess(playerId: string, rawText: string): void {
+    const player = this.players.get(playerId);
+    if (!player || !player.isConnected) return;
+
+    const sanitized = sanitizeChatMessage(rawText);
+    if (!sanitized) return;
+
+    // If game is in DRAWING phase
+    if (this.gameState.phase === 'DRAWING') {
+      const isDrawer = playerId === this.gameState.currentDrawerId;
+
+      // Drawer cannot guess or type the word in chat
+      if (isDrawer) {
+        const normGuess = normalizeText(sanitized);
+        const normTarget = normalizeText(this.selectedWord);
+        if (normGuess.includes(normTarget)) {
+          // Block message that reveals word
+          this.callbacks.onChatMessage({
+            id: Math.random().toString(36).substring(2, 9),
+            senderName: 'Game',
+            text: `You cannot give away the word in chat!`,
+            type: 'system',
+            timestamp: Date.now(),
+          });
+          return;
+        }
+
+        // Drawer regular chat
+        this.callbacks.onChatMessage({
+          id: Math.random().toString(36).substring(2, 9),
+          senderId: player.id,
+          senderName: player.nickname,
+          senderColor: player.color,
+          text: sanitized,
+          type: 'chat',
+          timestamp: Date.now(),
+        });
+        return;
+      }
+
+      // Player has already guessed correctly in this turn: don't let them spam answers
+      if (player.hasGuessed) {
+        this.callbacks.onChatMessage({
+          id: Math.random().toString(36).substring(2, 9),
+          senderId: player.id,
+          senderName: player.nickname,
+          senderColor: player.color,
+          text: sanitized,
+          type: 'chat',
+          timestamp: Date.now(),
+        });
+        return;
+      }
+
+      // Check for exact guess match
+      const normGuess = normalizeText(sanitized);
+      const normTarget = normalizeText(this.selectedWord);
+
+      if (normGuess === normTarget) {
+        // CORRECT GUESS!
+        player.hasGuessed = true;
+        this.gameState.guessedPlayerIds.push(player.id);
+        this.guessTimes.push(this.gameState.timeRemaining);
+
+        const rank = this.gameState.guessedPlayerIds.length;
+        const points = ScoringSystem.calculateGuesserScore(
+          rank,
+          this.gameState.timeRemaining,
+          this.gameState.totalTime
+        );
+
+        player.score += points;
+        player.roundScore = points;
+        this.gameState.roundScores[player.id] = points;
+
+        // Sound trigger
+        this.callbacks.onSoundTrigger('CORRECT_GUESS', player.socketId);
+        this.callbacks.onSoundTrigger('DING');
+
+        // Announcement
+        this.callbacks.onChatMessage({
+          id: Math.random().toString(36).substring(2, 9),
+          senderName: 'Game',
+          text: `${player.nickname} guessed the word! (+${points} pts)`,
+          type: 'correct',
+          timestamp: Date.now(),
+        });
+
+        this.broadcastState();
+
+        // Check if all eligible guessers have guessed
+        const eligibleGuessers = Array.from(this.players.values()).filter(
+          p => p.isConnected && p.id !== this.gameState.currentDrawerId
+        );
+
+        if (this.gameState.guessedPlayerIds.length >= eligibleGuessers.length) {
+          // Everyone guessed! End turn early
+          this.endTurn('Everyone guessed the word!');
+        } else if (this.gameState.timeRemaining > 10 && this.gameState.guessedPlayerIds.length === 1 && eligibleGuessers.length > 2) {
+          // Accelerate timer slightly to keep game fast-paced
+          // (optional: don't cut too harsh, e.g. min 15s remaining)
+        }
+        return;
+      }
+
+      // Check if close guess (distance = 1)
+      if (isCloseGuess(sanitized, this.selectedWord)) {
+        this.callbacks.onCloseGuessNotification(player.socketId);
+      }
+
+      // Regular guess message
+      this.callbacks.onChatMessage({
+        id: Math.random().toString(36).substring(2, 9),
+        senderId: player.id,
+        senderName: player.nickname,
+        senderColor: player.color,
+        text: sanitized,
+        type: 'guess',
+        timestamp: Date.now(),
+      });
+      return;
+    }
+
+    // Outside DRAWING phase: standard lobby or intermission chat
+    this.callbacks.onChatMessage({
+      id: Math.random().toString(36).substring(2, 9),
+      senderId: player.id,
+      senderName: player.nickname,
+      senderColor: player.color,
+      text: sanitized,
+      type: 'chat',
+      timestamp: Date.now(),
+    });
+  }
+
+  /**
+   * Concludes the current drawing turn.
+   */
+  private endTurn(reason: string): void {
+    this.clearTimer();
+
+    this.gameState.phase = 'ROUND_END';
+    this.gameState.lastWordRevealed = this.selectedWord;
+    this.gameState.timeRemaining = 6; // 6 seconds intermission
+    this.gameState.totalTime = 6;
+
+    // Calculate drawer's score
+    const drawerId = this.gameState.currentDrawerId;
+    if (drawerId) {
+      const drawer = this.players.get(drawerId);
+      if (drawer) {
+        const eligibleGuessers = Array.from(this.players.values()).filter(
+          p => p.isConnected && p.id !== drawerId
+        );
+        const correctCount = this.gameState.guessedPlayerIds.length;
+        const avgTime = this.guessTimes.length > 0
+          ? this.guessTimes.reduce((a, b) => a + b, 0) / this.guessTimes.length
+          : 0;
+
+        const drawerPoints = ScoringSystem.calculateDrawerScore(
+          correctCount,
+          eligibleGuessers.length,
+          avgTime,
+          this.settings.drawTime
+        );
+
+        drawer.score += drawerPoints;
+        drawer.roundScore = drawerPoints;
+        this.gameState.roundScores[drawerId] = drawerPoints;
+      }
+    }
+
+    this.callbacks.onChatMessage({
+      id: Math.random().toString(36).substring(2, 9),
+      senderName: 'Game',
+      text: `The word was "${this.selectedWord}"!`,
+      type: 'system',
+      timestamp: Date.now(),
+    });
+
+    this.callbacks.onSoundTrigger('ROUND_END');
+    this.broadcastState();
+
+    // 6-second intermission timer before advancing to next turn
+    this.timerInterval = setInterval(() => {
+      this.gameState.timeRemaining--;
+
+      if (this.gameState.timeRemaining <= 0) {
+        this.clearTimer();
+        this.advanceTurn();
+      } else {
+        this.broadcastState();
+      }
+    }, 1000);
+  }
+
+  /**
+   * Advances turn to the next player, or next round, or GAME_OVER.
+   */
+  private advanceTurn(): void {
+    this.clearTimer();
+    this.gameState.currentTurnIndex++;
+
+    // Check if round finished
+    if (this.gameState.currentTurnIndex >= this.gameState.turnOrder.length) {
+      this.gameState.currentTurnIndex = 0;
+      this.gameState.currentRound++;
+
+      if (this.gameState.currentRound > this.gameState.totalRounds) {
+        // GAME OVER!
+        this.endGame();
+        return;
+      }
+    }
+
+    // Start next turn
+    this.startTurn();
+  }
+
+  /**
+   * Game Over screen.
+   */
+  private endGame(): void {
+    this.clearTimer();
+    this.gameState.phase = 'GAME_OVER';
+    this.gameState.currentDrawerId = null;
+    this.gameState.timeRemaining = 0;
+
+    this.callbacks.onSoundTrigger('GAME_OVER');
+    this.callbacks.onChatMessage({
+      id: Math.random().toString(36).substring(2, 9),
+      senderName: 'Game',
+      text: 'Game over! Check out the final leaderboard!',
+      type: 'system',
+      timestamp: Date.now(),
+    });
+
+    this.broadcastState();
+  }
+
+  /**
+   * Reset game back to lobby for instant Rematch.
+   */
+  public resetToLobby(): void {
+    this.clearTimer();
+    this.drawHistory = [];
+    this.callbacks.onCanvasClear();
+    this.gameState.phase = 'LOBBY';
+    this.gameState.currentRound = 1;
+    this.gameState.currentDrawerId = null;
+    this.gameState.timeRemaining = 0;
+    this.gameState.hint = null;
+    this.gameState.guessedPlayerIds = [];
+    this.gameState.roundScores = {};
+
+    this.players.forEach(p => {
+      p.score = 0;
+      p.roundScore = 0;
+      p.hasGuessed = false;
+    });
+
+    this.callbacks.onChatMessage({
+      id: Math.random().toString(36).substring(2, 9),
+      senderName: 'Game',
+      text: 'Lobby reset for a rematch! Ready up to play again.',
+      type: 'system',
+      timestamp: Date.now(),
+    });
+
+    this.broadcastState();
+  }
+
+  public handlePlayerDisconnect(playerId: string): void {
+    // If the disconnecting player is currently drawing, abort turn and move on
+    if (this.gameState.phase === 'DRAWING' || this.gameState.phase === 'CHOOSING_WORD') {
+      if (this.gameState.currentDrawerId === playerId) {
+        this.callbacks.onChatMessage({
+          id: Math.random().toString(36).substring(2, 9),
+          senderName: 'Game',
+          text: 'The drawer disconnected! Skipping to next turn...',
+          type: 'system',
+          timestamp: Date.now(),
+        });
+        this.advanceTurn();
+      } else {
+        // If guesser disconnected, check if remaining players already guessed
+        const eligibleGuessers = Array.from(this.players.values()).filter(
+          p => p.isConnected && p.id !== this.gameState.currentDrawerId
+        );
+        if (
+          eligibleGuessers.length > 0 &&
+          this.gameState.guessedPlayerIds.length >= eligibleGuessers.length
+        ) {
+          this.endTurn('Everyone guessed the word!');
+        }
+      }
+    }
+  }
+
+  public clearTimer(): void {
+    if (this.timerInterval) {
+      clearInterval(this.timerInterval);
+      this.timerInterval = null;
+    }
+  }
+
+  private broadcastState(): void {
+    this.callbacks.onStateUpdate(this.getGameState());
+  }
+}
