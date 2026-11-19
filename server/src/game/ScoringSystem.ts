@@ -1,60 +1,51 @@
 export class ScoringSystem {
   /**
-   * Calculates points for a guesser who guessed correctly.
-   * @param guessRank 1 for 1st guesser, 2 for 2nd, etc.
-   * @param timeRemaining remaining seconds on the timer
-   * @param totalTime total round drawing seconds
+   * Calculates points for a guesser based on remaining round time.
+   * Formula:
+   * remainingRatio = remainingTime / totalRoundTime (clamped 0..1)
+   * guesserPoints = 100 + floor(400 * remainingRatio)
+   *
+   * Expected range:
+   * - Maximum: 500 points (immediate guess)
+   * - Minimum: 100 points (guess right before timeout)
+   * - 0 points if round ended or time expired
+   *
+   * @param remainingTime authoritative seconds left on the round timer
+   * @param totalRoundTime total seconds allocated for the round
    */
   public static calculateGuesserScore(
-    guessRank: number,
-    timeRemaining: number,
-    totalTime: number
+    remainingTime: number,
+    totalRoundTime: number
   ): number {
-    const timeFraction = Math.max(0, Math.min(1, timeRemaining / totalTime));
-    
-    // Base points scaled by how fast the guess was (100 to 350)
-    const timePoints = Math.round(100 + timeFraction * 250);
-
-    // Rank bonus
-    let rankBonus = 0;
-    if (guessRank === 1) {
-      rankBonus = 150;
-    } else if (guessRank === 2) {
-      rankBonus = 90;
-    } else if (guessRank === 3) {
-      rankBonus = 50;
-    } else {
-      rankBonus = 20;
+    if (totalRoundTime <= 0 || remainingTime <= 0) {
+      return 100;
     }
-
-    return timePoints + rankBonus;
+    const remainingRatio = Math.max(0, Math.min(1, remainingTime / totalRoundTime));
+    return 100 + Math.floor(400 * remainingRatio);
   }
 
   /**
-   * Calculates points for the drawer at the end of the turn.
-   * @param correctGuessesCount number of players who guessed correctly
-   * @param totalEligibleGuessers total players in room minus the drawer
-   * @param averageTimeRemaining average time remaining when correct guesses occurred
-   * @param totalTime total round time
+   * Calculates the bonus points awarded to the drawer for a single correct guesser.
+   * Formula:
+   * remainingRatio = remainingTime / totalRoundTime (clamped 0..1)
+   * drawerBonus = 25 + floor(75 * remainingRatio)
+   *
+   * Expected range:
+   * - Maximum: 100 points per guesser (immediate guess)
+   * - Minimum: 25 points per guesser (guess right before timeout)
+   *
+   * @param remainingTime authoritative seconds left when the correct guess occurred
+   * @param totalRoundTime total seconds allocated for the round
    */
-  public static calculateDrawerScore(
-    correctGuessesCount: number,
-    totalEligibleGuessers: number,
-    averageTimeRemaining: number,
-    totalTime: number
+  public static calculateDrawerBonus(
+    remainingTime: number,
+    totalRoundTime: number
   ): number {
-    if (correctGuessesCount === 0 || totalEligibleGuessers === 0) {
-      return 0;
+    if (totalRoundTime <= 0 || remainingTime <= 0) {
+      return 25;
     }
-
-    // Ratio of players who successfully guessed (0.0 - 1.0)
-    const successRatio = correctGuessesCount / totalEligibleGuessers;
-    const basePoints = Math.round(successRatio * 300);
-
-    // Speed bonus: drawer drew clearly and quickly
-    const speedRatio = Math.max(0, Math.min(1, averageTimeRemaining / totalTime));
-    const speedBonus = Math.round(speedRatio * 150);
-
-    return basePoints + speedBonus;
+    const remainingRatio = Math.max(0, Math.min(1, remainingTime / totalRoundTime));
+    return 25 + Math.floor(75 * remainingRatio);
   }
 }
+

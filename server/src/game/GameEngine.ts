@@ -12,6 +12,7 @@ export interface GameEngineCallbacks {
   onCloseGuessNotification: (socketId: string) => void;
   onCanvasClear: () => void;
   onSoundTrigger: (sound: string, targetSocketId?: string) => void;
+  onScoresUpdate?: () => void;
 }
 
 export class GameEngine {
@@ -26,6 +27,7 @@ export class GameEngine {
   // Active turn state
   private selectedWord: string = '';
   private timerInterval: NodeJS.Timeout | null = null;
+  private roundDeadline: number = 0; // Authoritative epoch ms for round timeout
   private guessTimes: number[] = []; // record timeRemaining when correct guesses occur
   private drawHistory: DrawAction[] = [];
 
@@ -115,6 +117,7 @@ export class GameEngine {
       p.roundScore = 0;
       p.hasGuessed = false;
     });
+    this.callbacks.onScoresUpdate?.();
 
     this.startTurn();
   }
@@ -135,6 +138,7 @@ export class GameEngine {
       p.roundScore = 0;
       p.hasGuessed = false;
     });
+    this.callbacks.onScoresUpdate?.();
 
     // Determine current drawer
     const drawerId = this.gameState.turnOrder[this.gameState.currentTurnIndex];
@@ -197,6 +201,7 @@ export class GameEngine {
     this.gameState.timeRemaining = this.settings.drawTime;
     this.gameState.totalTime = this.settings.drawTime;
     this.gameState.currentWordLength = word.length;
+    this.roundDeadline = Date.now() + this.settings.drawTime * 1000;
 
     // Initialize progressive hint
     const initialHint = this.hintSystem.initialize(word, 'Category');
@@ -214,9 +219,10 @@ export class GameEngine {
     this.callbacks.onSoundTrigger('ROUND_START');
     this.broadcastState();
 
-    // Start drawing timer
+    // Start drawing countdown timer with authoritative deadline
     this.timerInterval = setInterval(() => {
-      this.gameState.timeRemaining--;
+      const remaining = Math.max(0, Math.ceil((this.roundDeadline - Date.now()) / 1000));
+      this.gameState.timeRemaining = remaining;
 
       // Hints progressive reveal (if enabled in settings)
       if (this.settings.hintsEnabled) {
@@ -282,8 +288,8 @@ export class GameEngine {
         return;
       }
 
-      // Player has already guessed correctly in this turn: don't let them spam answers
-      if (player.hasGuessed) {
+      // Player has already guessed correctly in this turn: don't let them spam answers or earn duplicate points
+      if (player.hasGuessed || this.gameState.guessedPlayerIds.includes(player.id)) {
         this.callbacks.onChatMessage({
           id: Math.random().toString(36).substring(2, 9),
           senderId: player.id,
@@ -301,36 +307,66 @@ export class GameEngine {
       const normTarget = normalizeText(this.selectedWord);
 
       if (normGuess === normTarget) {
-        // CORRECT GUESS!
+        // Calculate authoritative remaining seconds
+        const remaining = this.roundDeadline > 0
+          ? Math.min(this.settings.drawTime, Math.max(0, Math.ceil((this.roundDeadline - Date.now()) / 1000)))
+          : this.gameState.timeRemaining;
+
+        // If time already expired, round is concluding; no points awarded
+        if (remaining <= 0) {
+          this.endTurn('Time is up!');
+          return;
+        }
+
+        // CORRECT GUESS! Immediately mark player as guessed to block race conditions & duplicates
         player.hasGuessed = true;
         this.gameState.guessedPlayerIds.push(player.id);
-        this.guessTimes.push(this.gameState.timeRemaining);
+        this.guessTimes.push(remaining);
 
-        const rank = this.gameState.guessedPlayerIds.length;
-        const points = ScoringSystem.calculateGuesserScore(
-          rank,
-          this.gameState.timeRemaining,
-          this.gameState.totalTime
-        );
+        // 1. Calculate time-based score using Skribbl.io formulas
+        const guesserPoints = ScoringSystem.calculateGuesserScore(remaining, this.gameState.totalTime);
+        const drawerBonus = ScoringSystem.calculateDrawerBonus(remaining, this.gameState.totalTime);
 
-        player.score += points;
-        player.roundScore = points;
-        this.gameState.roundScores[player.id] = points;
+        // 2. Award guesser points exactly once
+        player.score += guesserPoints;
+        player.roundScore = guesserPoints;
+        this.gameState.roundScores[player.id] = guesserPoints;
 
-        // Sound trigger
+        // 3. Award drawer bonus immediately
+        const drawerId = this.gameState.currentDrawerId;
+        const drawer = drawerId ? this.players.get(drawerId) : null;
+        if (drawerId && drawer && drawerId !== player.id) {
+          drawer.score += drawerBonus;
+          drawer.roundScore = (drawer.roundScore || 0) + drawerBonus;
+          this.gameState.roundScores[drawerId] = drawer.roundScore;
+        }
+
+        // Sound triggers
         this.callbacks.onSoundTrigger('CORRECT_GUESS', player.socketId);
         this.callbacks.onSoundTrigger('DING');
 
-        // Announcement
+        // Announcements
         this.callbacks.onChatMessage({
           id: Math.random().toString(36).substring(2, 9),
           senderName: 'Game',
-          text: `${player.nickname} guessed the word! (+${points} pts)`,
+          text: `${player.nickname} guessed the word! (+${guesserPoints} pts)`,
           type: 'correct',
           timestamp: Date.now(),
         });
 
+        if (drawer && drawerId !== player.id) {
+          this.callbacks.onChatMessage({
+            id: Math.random().toString(36).substring(2, 9),
+            senderName: 'Game',
+            text: `${drawer.nickname} earned +${drawerBonus} pts (correct guess)`,
+            type: 'system',
+            timestamp: Date.now(),
+          });
+        }
+
+        // Broadcast game state AND synchronize updated player scores to all clients
         this.broadcastState();
+        this.callbacks.onScoresUpdate?.();
 
         // Check if all eligible guessers have guessed
         const eligibleGuessers = Array.from(this.players.values()).filter(
@@ -340,9 +376,6 @@ export class GameEngine {
         if (this.gameState.guessedPlayerIds.length >= eligibleGuessers.length) {
           // Everyone guessed! End turn early
           this.endTurn('Everyone guessed the word!');
-        } else if (this.gameState.timeRemaining > 10 && this.gameState.guessedPlayerIds.length === 1 && eligibleGuessers.length > 2) {
-          // Accelerate timer slightly to keep game fast-paced
-          // (optional: don't cut too harsh, e.g. min 15s remaining)
         }
         return;
       }
@@ -388,31 +421,8 @@ export class GameEngine {
     this.gameState.timeRemaining = 6; // 6 seconds intermission
     this.gameState.totalTime = 6;
 
-    // Calculate drawer's score
-    const drawerId = this.gameState.currentDrawerId;
-    if (drawerId) {
-      const drawer = this.players.get(drawerId);
-      if (drawer) {
-        const eligibleGuessers = Array.from(this.players.values()).filter(
-          p => p.isConnected && p.id !== drawerId
-        );
-        const correctCount = this.gameState.guessedPlayerIds.length;
-        const avgTime = this.guessTimes.length > 0
-          ? this.guessTimes.reduce((a, b) => a + b, 0) / this.guessTimes.length
-          : 0;
-
-        const drawerPoints = ScoringSystem.calculateDrawerScore(
-          correctCount,
-          eligibleGuessers.length,
-          avgTime,
-          this.settings.drawTime
-        );
-
-        drawer.score += drawerPoints;
-        drawer.roundScore = drawerPoints;
-        this.gameState.roundScores[drawerId] = drawerPoints;
-      }
-    }
+    // Note: Drawer points were already awarded dynamically upon each correct guess.
+    // If nobody guessed, drawer receives 0 points as intended. No points awarded after round ends.
 
     this.callbacks.onChatMessage({
       id: Math.random().toString(36).substring(2, 9),
@@ -424,6 +434,7 @@ export class GameEngine {
 
     this.callbacks.onSoundTrigger('ROUND_END');
     this.broadcastState();
+    this.callbacks.onScoresUpdate?.();
 
     // 6-second intermission timer before advancing to next turn
     this.timerInterval = setInterval(() => {
@@ -510,6 +521,7 @@ export class GameEngine {
       p.roundScore = 0;
       p.hasGuessed = false;
     });
+    this.callbacks.onScoresUpdate?.();
 
     this.callbacks.onChatMessage({
       id: Math.random().toString(36).substring(2, 9),

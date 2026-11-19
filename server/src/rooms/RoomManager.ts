@@ -60,6 +60,9 @@ export class Room {
             io.to(this.id).emit('sound_effect', sound);
           }
         },
+        onScoresUpdate: () => {
+          io.to(this.id).emit('room_data', this.toJSON());
+        },
       }
     );
   }
