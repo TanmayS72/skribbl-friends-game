@@ -106,3 +106,60 @@
 - Client Production Build (`npm --prefix client run build`): Exit code 0, 0 TypeScript errors.
 - Server Production Build (`npm --prefix server run build`): Exit code 0, 0 TypeScript errors.
 - Comprehensive Multiplayer & Drawing Test Suite (`node server/test-multiplayer.js`): All 11 tests passed with 100% success rate.
+
+
+---
+
+## Targeted Layout Correction: Space Allocation & 4:3 Canvas Proportions
+
+### 1. Root Cause Analysis
+1. **Unused Vertical Space in Canvas Wrapper**: In `MobileGameLayout.tsx`, the canvas container was assigned `flex-1 min-h-0`, absorbing over 500px of height on an 811px screen. However, because the canvas container was constrained to `aspect-[3/2]` and the screen width was 381px, the canvas width could only reach ~373px, restricting its height to ~248px. This resulted in over 250px of blank gray empty space floating above and below the canvas.
+2. **Artificial Squeezing of Lower Gameplay Section**: The player leaderboard and live chat split was hardcoded to `h-[125px]`, starving both the player list and chat of vertical space.
+3. **Aspect Ratio Mismatch**: The 3:2 (1200 × 800) widescreen ratio was excessively shallow for portrait mobile gaming compared to classic Skribbl.io's 4:3 (800 × 600 / 1200 × 900) standard.
+
+### 2. Solutions Implemented
+- **Standard 4:3 Canvas Virtual Geometry**: Upgraded `VIRTUAL_HEIGHT` from 800 to 900 (`1200 × 900`), establishing an exact 4:3 aspect ratio across all clients. This provides +13% vertical drawing height on mobile (from 248px to 280px on 381px screen; from 260px to 293px on 390px screen) while maintaining 100% mathematical consistency and circle/shape roundness across desktop, tablet, and mobile.
+- **Redesigned Two-Region Viewport Hierarchy**:
+  - **Upper Region (Drawing Section - Red Boundary)**:
+    - Sized to fit the 4:3 canvas (`shrink-0 max-h-[44vh] sm:max-h-[56vh]`).
+    - Eliminates all empty top and bottom gaps; the canvas expands edge-to-edge with crisp blue borders.
+  - **Lower Region (Gameplay Section - Blue Boundary)**:
+    - Assigned `flex-1 min-h-[160px] flex flex-col`, dynamically taking ALL remaining vertical space (~350px on 381 × 811 screen).
+    - Contains the compact 65px Drawing Toolbar (when drawing), the Player Leaderboard (42%) and Live Chat (58%) split with independent scrolling, and the 41px Guess Input at the bottom.
+    - Player leaderboard and chat height expanded from 125px to ~285px–350px, comfortably displaying 10+ player rows and 15+ chat messages without crowding.
+
+### 3. Viewport Breakdown at 381 × 811
+- Header (Navbar): 40px
+- Round/Timer/Word Bar: 30px
+- Drawing Section (Canvas): ~284px (4:3 ratio, zero empty gaps)
+- Toolbar (Drawer mode): 65px
+- Player & Chat Split: ~351px (`flex-1` dynamic allocation; 416px in guesser mode)
+- Guess Input: 41px
+- Total Viewport: Exactly 811px (0px vertical page overflow, 0px horizontal overflow).
+
+### 4. Build & Test Verification
+- Client Production Build (`npm --prefix client run build`): Exit code 0, 0 TypeScript errors.
+- Comprehensive Multiplayer & Drawing Test Suite (`node server/test-multiplayer.js`): All 11 tests passed with 100% success rate.
+
+
+---
+
+## Layout Alignment Restored & Working Brush/Eraser Size Selector Retained
+
+### 1. State Summary
+- **Preferred Alignment Restored**:
+  - Reverted `MobileGameLayout.tsx` to the user's preferred layout alignment:
+    - **Drawing Section**: `shrink-0 w-full max-h-[44vh] sm:max-h-[56vh] flex items-center justify-center p-1 sm:p-2 bg-[#F5F7FA] dark:bg-slate-950 overflow-hidden` with 4:3 canvas.
+    - **Lower Gameplay Section**: `flex-1 min-h-[160px] flex flex-col w-full border-t-2 border-blue-400 dark:border-blue-600/70 bg-white dark:bg-slate-900 shadow-xs`.
+    - **Drawing Toolbar**: Positioned at the top of the lower section when user is drawing.
+    - **Split Leaderboard & Live Chat**: `flex-1 min-h-[120px]` with independent vertical scrolling.
+    - **Guess Input Form**: `shrink-0` full-width at the bottom with safe area insets.
+- **Working Brush / Eraser Size Popover Preserved**:
+  - Kept the improved size selector button and floating popover in `DrawingToolbar.tsx`.
+  - Added `overflow-visible relative` to Section C and the toolbar wrapper so that when the size popover opens (`bottom-full mb-2.5 right-0 z-50`), it floats smoothly over the bottom of the canvas and is never clipped.
+  - Retained touch-friendly size presets (XS 3px, S 6px, M 12px, L 24px, XL 40px) with proportional dot thickness previews.
+  - Retained touch debouncing (`click` & `touchend` with 50ms delay) and `e.stopPropagation()` to prevent premature mobile touch dismissal.
+
+### 2. Verification & Results
+- **Client Build**: `npm --prefix client run build` passed with exit code 0.
+- **Multiplayer Suite**: `node server/test-multiplayer.js` passed with 100% success rate across all 11 tests.

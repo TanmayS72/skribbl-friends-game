@@ -1,7 +1,7 @@
 import { DrawAction, DrawPoint, StrokeAction, ShapeAction, FillAction } from '../types/game.js';
 
 export const VIRTUAL_WIDTH = 1200;
-export const VIRTUAL_HEIGHT = 800;
+export const VIRTUAL_HEIGHT = 900;
 
 export class DrawingEngine {
   private canvas: HTMLCanvasElement;
@@ -31,7 +31,7 @@ export class DrawingEngine {
   }
 
   /**
-   * Translates client pointer coordinates (e.g. from mouse/touch) to virtual 1200x800 canvas coordinates.
+   * Translates client pointer coordinates (e.g. from mouse/touch) to virtual 1200x900 canvas coordinates.
    */
   public getVirtualCoords(clientX: number, clientY: number): DrawPoint {
     const rect = this.canvas.getBoundingClientRect();

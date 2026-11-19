@@ -208,7 +208,7 @@ export const PracticePage: React.FC<PracticePageProps> = ({ onBack }) => {
         <span className="text-2xl font-black text-white">{word}</span>
       </div>
 
-      <div className="relative w-full aspect-[3/2] bg-white rounded-2xl overflow-hidden shadow-2xl border-4 border-slate-700 select-none mb-4">
+      <div className="relative w-full aspect-[4/3] max-w-[800px] mx-auto bg-white rounded-2xl overflow-hidden shadow-2xl border-4 border-slate-700 select-none mb-4" style={{ aspectRatio: '4 / 3' }}>
         <canvas
           ref={canvasRef}
           width={VIRTUAL_WIDTH}

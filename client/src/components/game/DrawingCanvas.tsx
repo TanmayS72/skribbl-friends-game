@@ -227,8 +227,8 @@ export const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
 
   return (
     <div
-      className={`relative aspect-[3/2] max-w-full max-h-full bg-white overflow-hidden border-2 sm:border-4 border-blue-500 shadow-sm select-none ${className}`}
-      style={{ touchAction: 'none' }}
+      className={`relative aspect-[4/3] max-w-full max-h-full bg-white overflow-hidden border-2 sm:border-4 border-blue-500 shadow-sm select-none ${className}`}
+      style={{ touchAction: 'none', aspectRatio: '4 / 3' }}
     >
       {/* Main Persistent Canvas */}
       <canvas

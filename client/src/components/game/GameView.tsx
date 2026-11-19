@@ -80,7 +80,7 @@ export const GameView: React.FC = () => {
 
               {/* Drawing Toolbar (Only rendered for current drawer in DRAWING phase) */}
               {isDrawer && gameState?.phase === 'DRAWING' && (
-                <div className="shrink-0">
+                <div className="shrink-0 border-t-2 border-blue-400 dark:border-blue-600/60 overflow-visible relative z-20">
                   <DrawingToolbar
                     currentTool={currentTool}
                     setTool={setTool}

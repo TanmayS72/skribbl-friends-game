@@ -54,18 +54,26 @@ export const DrawingToolbar: React.FC<DrawingToolbarProps> = ({
   const [showSizePicker, setShowSizePicker] = useState(false);
   const sizePickerRef = useRef<HTMLDivElement | null>(null);
 
-  // Close size picker on outside click
+  // Close size picker on outside tap/click
   useEffect(() => {
-    const handleOutsideClick = (e: MouseEvent) => {
+    if (!showSizePicker) return;
+
+    const handleOutsideClick = (e: MouseEvent | TouchEvent) => {
       if (sizePickerRef.current && !sizePickerRef.current.contains(e.target as Node)) {
         setShowSizePicker(false);
       }
     };
-    if (showSizePicker) {
-      document.addEventListener('pointerdown', handleOutsideClick);
-    }
+
+    // Small delay ensures the tap that opened the picker does not trigger immediate dismissal
+    const timer = setTimeout(() => {
+      document.addEventListener('click', handleOutsideClick);
+      document.addEventListener('touchend', handleOutsideClick);
+    }, 50);
+
     return () => {
-      document.removeEventListener('pointerdown', handleOutsideClick);
+      clearTimeout(timer);
+      document.removeEventListener('click', handleOutsideClick);
+      document.removeEventListener('touchend', handleOutsideClick);
     };
   }, [showSizePicker]);
 
@@ -112,7 +120,7 @@ export const DrawingToolbar: React.FC<DrawingToolbarProps> = ({
   );
 
   return (
-    <div className="w-full bg-white dark:bg-slate-900 border-t-2 border-blue-400 dark:border-blue-600/60 px-1.5 py-1 sm:px-3 sm:py-1.5 flex flex-col gap-1 select-none shadow-sm">
+    <div className="w-full bg-white dark:bg-slate-900 border-b border-gray-200 dark:border-slate-800 px-1.5 py-1 sm:px-3 sm:py-1.5 flex flex-col gap-1 select-none shadow-xs">
       {/* ROW 1: Tools, Size Selector Popover, Undo & Clear */}
       <div className="flex items-center justify-between gap-1 w-full relative">
         {/* Drawing Tools Group */}
@@ -132,43 +140,92 @@ export const DrawingToolbar: React.FC<DrawingToolbarProps> = ({
           <div className="relative" ref={sizePickerRef}>
             <button
               type="button"
-              onClick={() => setShowSizePicker(prev => !prev)}
-              title={`Brush Size: ${currentSizeObj.label}`}
-              className="h-8 px-2 sm:h-9 rounded-md border border-gray-300 dark:border-slate-700 bg-gray-50 dark:bg-slate-800 text-gray-700 dark:text-slate-200 flex items-center gap-1 text-xs font-bold hover:border-blue-400 transition-colors"
+              onClick={(e) => {
+                e.stopPropagation();
+                sounds.playPop();
+                setShowSizePicker(prev => !prev);
+              }}
+              onPointerDown={(e) => e.stopPropagation()}
+              title={`Brush & Eraser Size: ${currentSizeObj.label} (${currentSizeObj.value}px)`}
+              className={`h-8 px-2 sm:h-9 rounded-md border text-xs font-bold flex items-center gap-1.5 transition-all active:scale-95 ${
+                showSizePicker
+                  ? 'bg-blue-500 text-white border-blue-600 shadow-sm ring-2 ring-blue-300'
+                  : 'border-gray-300 dark:border-slate-700 bg-gray-50 dark:bg-slate-800 text-gray-700 dark:text-slate-200 hover:border-blue-400'
+              }`}
             >
               <div
-                className="rounded-full bg-current"
-                style={{ width: Math.max(3, Math.min(12, brushSize * 0.4)), height: Math.max(3, Math.min(12, brushSize * 0.4)) }}
+                className="rounded-full bg-current shrink-0"
+                style={{
+                  width: Math.max(4, Math.min(12, brushSize * 0.4)),
+                  height: Math.max(4, Math.min(12, brushSize * 0.4)),
+                }}
               />
-              <span className="text-[10px] sm:text-xs">{currentSizeObj.label}</span>
+              <span className="text-[11px] sm:text-xs font-black leading-none">{currentSizeObj.label}</span>
             </button>
 
             {/* Size Popover */}
             {showSizePicker && (
-              <div className="absolute bottom-full mb-1.5 right-0 z-50 bg-white dark:bg-slate-800 border-2 border-blue-400 dark:border-blue-500 rounded-lg shadow-xl p-1.5 flex items-center gap-1 animate-in fade-in zoom-in-95 duration-100">
-                {SIZES.map((s) => (
+              <div
+                className="absolute bottom-full mb-2.5 right-0 z-50 bg-white dark:bg-slate-800 border-2 border-blue-500 dark:border-blue-400 rounded-xl shadow-2xl p-2.5 min-w-[220px] select-none animate-in fade-in zoom-in-95 duration-100"
+                onClick={(e) => e.stopPropagation()}
+                onPointerDown={(e) => e.stopPropagation()}
+              >
+                {/* Downward triangle/arrow pointing to the trigger button */}
+                <div className="absolute -bottom-1.5 right-4 w-3 h-3 bg-white dark:bg-slate-800 border-r-2 border-b-2 border-blue-500 dark:border-blue-400 rotate-45 pointer-events-none" />
+
+                {/* Header */}
+                <div className="flex items-center justify-between pb-1.5 mb-2 border-b border-gray-100 dark:border-slate-700">
+                  <span className="text-[11px] font-extrabold uppercase tracking-wider text-gray-700 dark:text-slate-200">
+                    Brush & Eraser Size
+                  </span>
                   <button
-                    key={s.value}
                     type="button"
-                    onClick={() => {
-                      sounds.playPop();
-                      setSize(s.value);
+                    onClick={(e) => {
+                      e.stopPropagation();
                       setShowSizePicker(false);
                     }}
-                    title={`Size ${s.label}`}
-                    className={`h-8 w-8 rounded flex flex-col items-center justify-center transition-all ${
-                      brushSize === s.value
-                        ? 'bg-blue-500 text-white font-bold shadow'
-                        : 'text-gray-600 dark:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-700'
-                    }`}
+                    className="text-gray-400 hover:text-gray-600 dark:hover:text-slate-200 p-0.5 rounded transition-colors"
+                    title="Close"
                   >
-                    <div
-                      className="rounded-full bg-current mb-0.5"
-                      style={{ width: Math.max(3, Math.min(14, s.value * 0.5)), height: Math.max(3, Math.min(14, s.value * 0.5)) }}
-                    />
-                    <span className="text-[8px] leading-none">{s.label}</span>
+                    <X className="w-3.5 h-3.5" />
                   </button>
-                ))}
+                </div>
+
+                {/* 5 Preset Sizes */}
+                <div className="flex items-center justify-between gap-1.5">
+                  {SIZES.map((s) => {
+                    const isSelected = brushSize === s.value;
+                    const dotDiameter = s.value === 3 ? 4 : s.value === 6 ? 7 : s.value === 12 ? 12 : s.value === 24 ? 18 : 24;
+
+                    return (
+                      <button
+                        key={s.value}
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          sounds.playPop();
+                          setSize(s.value);
+                          setShowSizePicker(false);
+                        }}
+                        title={`Size ${s.label} (${s.value}px)`}
+                        className={`h-12 flex-1 rounded-lg flex flex-col items-center justify-center gap-1 transition-all active:scale-95 ${
+                          isSelected
+                            ? 'bg-blue-500 text-white font-black shadow-md ring-2 ring-blue-300 scale-105 z-10'
+                            : 'bg-gray-100 dark:bg-slate-700/60 text-gray-700 dark:text-slate-200 hover:bg-blue-50 dark:hover:bg-slate-700 border border-transparent hover:border-blue-300'
+                        }`}
+                      >
+                        <div
+                          className="rounded-full bg-current transition-transform"
+                          style={{
+                            width: `${dotDiameter}px`,
+                            height: `${dotDiameter}px`,
+                          }}
+                        />
+                        <span className="text-[9px] font-bold leading-none">{s.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             )}
           </div>
