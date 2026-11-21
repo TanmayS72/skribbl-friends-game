@@ -27,18 +27,21 @@ app.use(cors({
 }));
 app.use(express.json());
 
-// Socket.io configuration with ping intervals and CORS
+// Socket.io configuration with ping intervals and CORS (resilient mobile settings)
 const io = new Server(httpServer, {
   cors: {
     origin: '*',
     methods: ['GET', 'POST'],
   },
-  pingInterval: 10000,
-  pingTimeout: 5000,
+  pingInterval: 25000,
+  pingTimeout: 20000,
   maxHttpBufferSize: 1e6, // 1MB buffer for stroke data
 });
 
 const roomManager = new RoomManager(io);
+roomManager.initialize().catch(err => {
+  console.warn('RoomManager initialization notice:', err.message);
+});
 setupSocketHandlers(io, roomManager);
 
 // REST Endpoints
@@ -50,8 +53,8 @@ app.get('/api/categories', (req, res) => {
   res.json({ categories: CATEGORIES });
 });
 
-app.get('/api/rooms/:roomId', (req, res) => {
-  const room = roomManager.getRoom(req.params.roomId);
+app.get('/api/rooms/:roomId', async (req, res) => {
+  const room = await roomManager.getRoomAsync(req.params.roomId);
   if (!room) {
     return res.status(404).json({ exists: false, error: 'Room not found' });
   }

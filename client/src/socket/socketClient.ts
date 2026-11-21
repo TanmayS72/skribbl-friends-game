@@ -5,9 +5,28 @@ class SocketClient {
   private url: string;
 
   constructor() {
-    // If running in development with Vite proxy, use empty string or relative path,
-    // or explicit env VITE_SERVER_URL / localhost:4000
     this.url = (import.meta as any).env?.VITE_SERVER_URL || '';
+    this.setupWindowListeners();
+  }
+
+  private setupWindowListeners(): void {
+    if (typeof window === 'undefined') return;
+
+    // Fast-reconnect when device regains network connectivity
+    window.addEventListener('online', () => {
+      console.log('🌐 Browser went online. Re-engaging socket connection...');
+      if (this.socket && !this.socket.connected) {
+        this.socket.connect();
+      }
+    });
+
+    // Fast-reconnect when user returns to tab / unlocks mobile device
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible' && this.socket && !this.socket.connected) {
+        console.log('📱 Tab became active. Checking connection...');
+        this.socket.connect();
+      }
+    });
   }
 
   public connect(): Socket {
@@ -15,8 +34,10 @@ class SocketClient {
       this.socket = io(this.url, {
         autoConnect: true,
         reconnection: true,
-        reconnectionAttempts: 10,
+        reconnectionAttempts: Infinity, // Never permanently abandon reconnection on free Render tier
         reconnectionDelay: 1000,
+        reconnectionDelayMax: 5000, // Exponential backoff capped at 5s
+        randomizationFactor: 0.5,
         transports: ['websocket', 'polling'],
       });
 
@@ -26,6 +47,10 @@ class SocketClient {
 
       this.socket.on('disconnect', (reason) => {
         console.log('⚠️ Disconnected from server:', reason);
+      });
+
+      this.socket.on('reconnect_attempt', (attempt) => {
+        console.log(`🔄 Reconnect attempt #${attempt}...`);
       });
     }
     return this.socket;

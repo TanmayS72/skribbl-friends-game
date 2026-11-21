@@ -6,10 +6,10 @@ import { GameView } from './components/game/GameView.js';
 import { ResultsView } from './components/results/ResultsView.js';
 import { PracticePage } from './pages/PracticePage.js';
 import { useGame } from './context/GameContext.js';
-import { WifiOff } from 'lucide-react';
+import { WifiOff, RefreshCw, Sparkles } from 'lucide-react';
 
 export const App: React.FC = () => {
-  const { room, gameState, isConnected } = useGame();
+  const { room, gameState, isConnected, connectionStatus } = useGame();
   const [isPractice, setIsPractice] = useState(false);
 
   // Dark/Light theme state persisted via localStorage
@@ -40,12 +40,22 @@ export const App: React.FC = () => {
       />
 
       {/* Connection warning banner */}
-      {!isConnected && (
-        <div className="bg-amber-600/90 text-white text-xs font-bold py-1 px-4 text-center flex items-center justify-center gap-2 shrink-0">
+      {connectionStatus === 'restoring' ? (
+        <div className="bg-blue-600 text-white text-xs font-bold py-1 px-4 text-center flex items-center justify-center gap-2 shrink-0 animate-pulse">
+          <Sparkles className="w-3.5 h-3.5" />
+          <span>Restoring room session...</span>
+        </div>
+      ) : connectionStatus === 'reconnecting' ? (
+        <div className="bg-amber-600 text-white text-xs font-bold py-1 px-4 text-center flex items-center justify-center gap-2 shrink-0">
+          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+          <span>Connection interrupted. Reconnecting to server...</span>
+        </div>
+      ) : !isConnected ? (
+        <div className="bg-amber-700/90 text-white text-xs font-bold py-1 px-4 text-center flex items-center justify-center gap-2 shrink-0">
           <WifiOff className="w-3.5 h-3.5 animate-pulse" />
           <span>Connecting to multiplayer server...</span>
         </div>
-      )}
+      ) : null}
 
       {/* Main Content Area */}
       <main className={`flex-1 ${isInGame ? 'min-h-0 overflow-hidden' : 'overflow-x-hidden'}`}>

@@ -46,11 +46,11 @@ export function setupSocketHandlers(io: Server, roomManager: RoomManager) {
           hasGuessed: false,
         };
 
-        const room = roomManager.createRoom(hostPlayer);
+        const { room, sessionToken } = roomManager.createRoom(hostPlayer);
         socket.join(room.id);
 
         if (typeof callback === 'function') {
-          callback({ success: true, room: room.toJSON() });
+          callback({ success: true, room: room.toJSON(), sessionToken, playerId: hostPlayer.id });
         }
       } catch (err: any) {
         if (typeof callback === 'function') {
@@ -109,11 +109,68 @@ export function setupSocketHandlers(io: Server, roomManager: RoomManager) {
           timestamp: Date.now(),
         });
 
-        // Send existing draw history to joining player so they see active canvas!
+        // Send recent chat history and existing draw history to joining player
+        socket.emit('chat_history', room.chatHistory);
         socket.emit('canvas_snapshot', room.gameEngine.getDrawHistory());
 
         if (typeof callback === 'function') {
-          callback({ success: true, room: room.toJSON() });
+          callback({
+            success: true,
+            room: room.toJSON(),
+            sessionToken: result.sessionToken,
+            playerId: newPlayer.id,
+          });
+        }
+      } catch (err: any) {
+        if (typeof callback === 'function') {
+          callback({ success: false, error: err.message });
+        }
+      }
+    });
+
+    // 2.5 Reconnect Session (Token-based restoration)
+    socket.on('reconnect_session', (data: { roomId: string; playerId: string; sessionToken: string }, callback) => {
+      try {
+        const { roomId, playerId, sessionToken } = data || {};
+        if (!roomId || !playerId || !sessionToken) {
+          if (typeof callback === 'function') {
+            callback({ success: false, error: 'Missing reconnection parameters' });
+          }
+          return;
+        }
+
+        const result = roomManager.reconnectSession(roomId, playerId, sessionToken, socket.id);
+        if (!result.success || !result.room) {
+          if (typeof callback === 'function') {
+            callback({ success: false, error: result.error || 'Failed to restore session' });
+          }
+          return;
+        }
+
+        const room = result.room;
+        socket.join(room.id);
+
+        // Synchronize full state for reconnecting player
+        socket.emit('room_data', room.toJSON());
+        socket.emit('chat_history', room.chatHistory);
+        socket.emit('canvas_snapshot', room.gameEngine.getDrawHistory());
+
+        // Broadcast to everyone else that player is back
+        io.to(room.id).emit('room_data', room.toJSON());
+        io.to(room.id).emit('chat_message', {
+          id: Math.random().toString(36).substring(2, 9),
+          senderName: 'Game',
+          text: `${result.player?.nickname || 'Player'} reconnected.`,
+          type: 'join',
+          timestamp: Date.now(),
+        });
+
+        if (typeof callback === 'function') {
+          callback({
+            success: true,
+            room: room.toJSON(),
+            player: result.player,
+          });
         }
       } catch (err: any) {
         if (typeof callback === 'function') {

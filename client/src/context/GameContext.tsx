@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { RoomData, GameState, ChatMessage, DrawAction, GameSettings, Player } from '../types/game.js';
 import { socketService } from '../socket/socketClient.js';
 import { sounds } from '../audio/SoundEngine.js';
@@ -9,6 +9,8 @@ export interface PlayerProfile {
   avatar: string;
   color: string;
 }
+
+export type ConnectionStatus = 'connected' | 'reconnecting' | 'disconnected' | 'restoring';
 
 interface GameContextType {
   profile: PlayerProfile;
@@ -23,6 +25,7 @@ interface GameContextType {
   canvasSnapshot: DrawAction[] | null;
   closeGuessAlert: boolean;
   isConnected: boolean;
+  connectionStatus: ConnectionStatus;
   error: string | null;
   clearError: () => void;
   createRoom: () => Promise<string | null>;
@@ -74,6 +77,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [canvasSnapshot, setCanvasSnapshot] = useState<DrawAction[] | null>(null);
   const [closeGuessAlert, setCloseGuessAlert] = useState<boolean>(false);
   const [isConnected, setIsConnected] = useState<boolean>(false);
+  const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('disconnected');
   const [error, setError] = useState<string | null>(null);
 
   const socket = socketService.getSocket();
@@ -90,8 +94,53 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Setup Socket listeners
   useEffect(() => {
-    const onConnect = () => setIsConnected(true);
-    const onDisconnect = () => setIsConnected(false);
+    const onConnect = () => {
+      setIsConnected(true);
+
+      // Attempt automatic session restoration if reconnecting
+      const savedSessionRaw = localStorage.getItem('doodledash_active_session');
+      if (savedSessionRaw) {
+        try {
+          const session = JSON.parse(savedSessionRaw);
+          if (session && session.roomId && session.sessionToken) {
+            setConnectionStatus('restoring');
+            socket.emit('reconnect_session', session, (response: any) => {
+              if (response && response.success) {
+                setRoom(response.room);
+                if (response.room.gameState) {
+                  setGameState(response.room.gameState);
+                }
+                setConnectionStatus('connected');
+                try {
+                  const url = new URL(window.location.href);
+                  url.searchParams.set('room', response.room.id);
+                  window.history.replaceState({}, document.title, url.pathname + url.search);
+                } catch (e) {}
+              } else {
+                localStorage.removeItem('doodledash_active_session');
+                setConnectionStatus('connected');
+                if (response?.error && response.error.includes('expired')) {
+                  setError('Room has expired after 24 hours of inactivity.');
+                }
+              }
+            });
+            return;
+          }
+        } catch (e) {
+          localStorage.removeItem('doodledash_active_session');
+        }
+      }
+      setConnectionStatus('connected');
+    };
+
+    const onDisconnect = () => {
+      setIsConnected(false);
+      setConnectionStatus('disconnected');
+    };
+
+    const onReconnectAttempt = () => {
+      setConnectionStatus('reconnecting');
+    };
 
     const onRoomData = (data: RoomData) => {
       setRoom(data);
@@ -113,7 +162,20 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
 
     const onChatMessage = (msg: ChatMessage) => {
-      setChatMessages(prev => [...prev.slice(-80), msg]);
+      setChatMessages(prev => {
+        // Prevent duplicate message IDs
+        if (prev.some(m => m.id === msg.id)) return prev;
+        return [...prev.slice(-80), msg];
+      });
+    };
+
+    const onChatHistory = (history: ChatMessage[]) => {
+      if (!Array.isArray(history)) return;
+      setChatMessages(prev => {
+        const existingIds = new Set(prev.map(m => m.id));
+        const newOnes = history.filter(m => !existingIds.has(m.id));
+        return [...prev, ...newOnes].slice(-80);
+      });
     };
 
     const onCloseGuess = () => {
@@ -156,6 +218,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
 
     const onKicked = (reason: string) => {
+      localStorage.removeItem('doodledash_active_session');
       setRoom(null);
       setGameState(null);
       setChatMessages([]);
@@ -175,10 +238,12 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     socket.on('connect', onConnect);
     socket.on('disconnect', onDisconnect);
+    socket.on('reconnect_attempt', onReconnectAttempt);
     socket.on('room_data', onRoomData);
     socket.on('game_state_update', onGameStateUpdate);
     socket.on('word_choices', onWordChoices);
     socket.on('chat_message', onChatMessage);
+    socket.on('chat_history', onChatHistory);
     socket.on('close_guess_notification', onCloseGuess);
     socket.on('draw_action', onDrawAction);
     socket.on('canvas_snapshot', onCanvasSnapshot);
@@ -188,10 +253,12 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => {
       socket.off('connect', onConnect);
       socket.off('disconnect', onDisconnect);
+      socket.off('reconnect_attempt', onReconnectAttempt);
       socket.off('room_data', onRoomData);
       socket.off('game_state_update', onGameStateUpdate);
       socket.off('word_choices', onWordChoices);
       socket.off('chat_message', onChatMessage);
+      socket.off('chat_history', onChatHistory);
       socket.off('close_guess_notification', onCloseGuess);
       socket.off('draw_action', onDrawAction);
       socket.off('canvas_snapshot', onCanvasSnapshot);
@@ -201,8 +268,8 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [socket]);
 
   // In-flight request guards
-  const isCreatingRoomRef = React.useRef(false);
-  const isJoiningRoomRef = React.useRef(false);
+  const isCreatingRoomRef = useRef(false);
+  const isJoiningRoomRef = useRef(false);
 
   // Actions
   const createRoom = useCallback(async (): Promise<string | null> => {
@@ -214,6 +281,13 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       socket.emit('create_room', profile, (response: any) => {
         isCreatingRoomRef.current = false;
         if (response && response.success) {
+          const sessionData = {
+            roomId: response.room.id,
+            playerId: response.playerId || profile.id,
+            sessionToken: response.sessionToken,
+          };
+          localStorage.setItem('doodledash_active_session', JSON.stringify(sessionData));
+
           setRoom(response.room);
           setGameState(response.room.gameState);
           setChatMessages([]);
@@ -251,12 +325,16 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       socket.emit('join_room', { roomId: cleanRoomId, player: profile }, (response: any) => {
         isJoiningRoomRef.current = false;
         if (response && response.success) {
+          const sessionData = {
+            roomId: response.room.id,
+            playerId: response.playerId || profile.id,
+            sessionToken: response.sessionToken,
+          };
+          localStorage.setItem('doodledash_active_session', JSON.stringify(sessionData));
+
           setRoom(response.room);
           setGameState(response.room.gameState);
-          setChatMessages([]);
           setWordChoices(null);
-          setLatestDrawAction(null);
-          setCanvasSnapshot(null);
 
           try {
             const url = new URL(window.location.href);
@@ -274,6 +352,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [socket, profile]);
 
   const leaveRoom = useCallback(() => {
+    localStorage.removeItem('doodledash_active_session');
     socket.emit('leave_room');
 
     setRoom(null);
@@ -367,6 +446,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         canvasSnapshot,
         closeGuessAlert,
         isConnected,
+        connectionStatus,
         error,
         clearError,
         createRoom,
@@ -390,7 +470,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
   );
 };
 
-export const useGame = () => {
+export const useGame = (): GameContextType => {
   const context = useContext(GameContext);
   if (!context) {
     throw new Error('useGame must be used within a GameProvider');

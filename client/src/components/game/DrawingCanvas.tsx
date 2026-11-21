@@ -36,6 +36,11 @@ export const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
       previewCanvasRef.current.width = VIRTUAL_WIDTH;
       previewCanvasRef.current.height = VIRTUAL_HEIGHT;
     }
+
+    // Replay initial snapshot if already loaded
+    if (canvasSnapshot && canvasSnapshot.length > 0) {
+      engine.replayHistory(canvasSnapshot);
+    }
   }, []);
 
   // Listen to remote draw actions from socket

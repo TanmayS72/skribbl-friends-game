@@ -28,6 +28,10 @@ export class GameEngine {
   private selectedWord: string = '';
   private timerInterval: NodeJS.Timeout | null = null;
   private roundDeadline: number = 0; // Authoritative epoch ms for round timeout
+  private currentPhaseDeadline: number = 0;
+  private isTransitioning: boolean = false;
+  private isPausedForDisconnect: boolean = false;
+  private currentWordChoices: string[] = [];
   private guessTimes: number[] = []; // record timeRemaining when correct guesses occur
   private drawHistory: DrawAction[] = [];
 
@@ -156,11 +160,14 @@ export class GameEngine {
     this.gameState.totalTime = 15;
     this.gameState.hint = null;
     this.gameState.lastWordRevealed = undefined;
+    this.currentPhaseDeadline = Date.now() + 15 * 1000;
+    this.roundDeadline = this.currentPhaseDeadline;
 
     // Pick 3 word choices
     const count = this.settings.wordCount || 3;
     const wordChoices = this.wordManager.getWordChoices(this.settings, count);
     const choiceWords = wordChoices.map(c => c.word);
+    this.currentWordChoices = choiceWords;
 
     // Send word choices ONLY to the drawer's socket
     this.callbacks.onDrawerWordChoices(drawer.socketId, choiceWords);
@@ -176,11 +183,14 @@ export class GameEngine {
       timestamp: Date.now(),
     });
 
-    // Start 15s countdown for word selection
+    // Start 15s authoritative countdown for word selection
+    this.clearTimer();
     this.timerInterval = setInterval(() => {
-      this.gameState.timeRemaining--;
+      const remaining = Math.max(0, Math.ceil((this.currentPhaseDeadline - Date.now()) / 1000));
+      this.gameState.timeRemaining = remaining;
 
-      if (this.gameState.timeRemaining <= 0) {
+      if (remaining <= 0) {
+        this.clearTimer();
         // Auto-select 1st word if drawer didn't pick in time
         this.selectWord(choiceWords[0] || 'Apple');
       } else {
@@ -193,7 +203,8 @@ export class GameEngine {
    * Called when drawer clicks a word choice or when choice timer expires.
    */
   public selectWord(word: string): void {
-    if (this.gameState.phase !== 'CHOOSING_WORD') return;
+    if (this.gameState.phase !== 'CHOOSING_WORD' || this.isTransitioning) return;
+    this.isTransitioning = true;
     this.clearTimer();
 
     this.selectedWord = word;
@@ -202,6 +213,7 @@ export class GameEngine {
     this.gameState.totalTime = this.settings.drawTime;
     this.gameState.currentWordLength = word.length;
     this.roundDeadline = Date.now() + this.settings.drawTime * 1000;
+    this.currentPhaseDeadline = this.roundDeadline;
 
     // Initialize progressive hint
     const initialHint = this.hintSystem.initialize(word, 'Category');
@@ -237,12 +249,14 @@ export class GameEngine {
       }
 
       // Check if time expired
-      if (this.gameState.timeRemaining <= 0) {
+      if (remaining <= 0) {
+        this.clearTimer();
         this.endTurn('Time is up!');
       } else {
         this.broadcastState();
       }
     }, 1000);
+    this.isTransitioning = false;
   }
 
   /**
@@ -414,12 +428,16 @@ export class GameEngine {
    * Concludes the current drawing turn.
    */
   private endTurn(reason: string): void {
+    if (this.isTransitioning) return;
+    this.isTransitioning = true;
     this.clearTimer();
 
     this.gameState.phase = 'ROUND_END';
     this.gameState.lastWordRevealed = this.selectedWord;
     this.gameState.timeRemaining = 6; // 6 seconds intermission
     this.gameState.totalTime = 6;
+    this.currentPhaseDeadline = Date.now() + 6 * 1000;
+    this.roundDeadline = this.currentPhaseDeadline;
 
     // Note: Drawer points were already awarded dynamically upon each correct guess.
     // If nobody guessed, drawer receives 0 points as intended. No points awarded after round ends.
@@ -436,17 +454,19 @@ export class GameEngine {
     this.broadcastState();
     this.callbacks.onScoresUpdate?.();
 
-    // 6-second intermission timer before advancing to next turn
+    // 6-second authoritative intermission timer before advancing to next turn
     this.timerInterval = setInterval(() => {
-      this.gameState.timeRemaining--;
+      const remaining = Math.max(0, Math.ceil((this.currentPhaseDeadline - Date.now()) / 1000));
+      this.gameState.timeRemaining = remaining;
 
-      if (this.gameState.timeRemaining <= 0) {
+      if (remaining <= 0) {
         this.clearTimer();
         this.advanceTurn();
       } else {
         this.broadcastState();
       }
     }, 1000);
+    this.isTransitioning = false;
   }
 
   /**
@@ -454,14 +474,16 @@ export class GameEngine {
    */
   private advanceTurn(): void {
     this.clearTimer();
+    this.isTransitioning = false;
 
     // Check if any connected players remain in the room
     const activePlayers = Array.from(this.players.values()).filter(p => p.isConnected);
     if (activePlayers.length === 0) {
-      this.clearTimer();
+      this.isPausedForDisconnect = true;
       return;
     }
 
+    this.isPausedForDisconnect = false;
     this.gameState.currentTurnIndex++;
 
     // Check if round finished
@@ -485,6 +507,7 @@ export class GameEngine {
    */
   private endGame(): void {
     this.clearTimer();
+    this.isTransitioning = false;
     this.gameState.phase = 'GAME_OVER';
     this.gameState.currentDrawerId = null;
     this.gameState.timeRemaining = 0;
@@ -506,6 +529,8 @@ export class GameEngine {
    */
   public resetToLobby(): void {
     this.clearTimer();
+    this.isTransitioning = false;
+    this.isPausedForDisconnect = false;
     this.drawHistory = [];
     this.callbacks.onCanvasClear();
     this.gameState.phase = 'LOBBY';
@@ -534,18 +559,29 @@ export class GameEngine {
     this.broadcastState();
   }
 
-  public handlePlayerDisconnect(playerId: string): void {
-    // If the disconnecting player is currently drawing, abort turn and move on
+  public handlePlayerDisconnect(playerId: string, isExplicitLeave: boolean = false): void {
+    // If the disconnecting player is currently drawing
     if (this.gameState.phase === 'DRAWING' || this.gameState.phase === 'CHOOSING_WORD') {
       if (this.gameState.currentDrawerId === playerId) {
-        this.callbacks.onChatMessage({
-          id: Math.random().toString(36).substring(2, 9),
-          senderName: 'Game',
-          text: 'The drawer disconnected! Skipping to next turn...',
-          type: 'system',
-          timestamp: Date.now(),
-        });
-        this.advanceTurn();
+        if (isExplicitLeave) {
+          this.callbacks.onChatMessage({
+            id: Math.random().toString(36).substring(2, 9),
+            senderName: 'Game',
+            text: 'The drawer left the game! Skipping to next turn...',
+            type: 'system',
+            timestamp: Date.now(),
+          });
+          this.advanceTurn();
+        } else {
+          // Temporary disconnection: keep timer running down so drawer has a grace period to reconnect
+          this.callbacks.onChatMessage({
+            id: Math.random().toString(36).substring(2, 9),
+            senderName: 'Game',
+            text: 'The drawer disconnected. Waiting for reconnection...',
+            type: 'system',
+            timestamp: Date.now(),
+          });
+        }
       } else {
         // If guesser disconnected, check if remaining players already guessed
         const eligibleGuessers = Array.from(this.players.values()).filter(
@@ -559,6 +595,105 @@ export class GameEngine {
         }
       }
     }
+  }
+
+  public ensureTimerRunning(): void {
+    if (this.timerInterval !== null) return;
+    const now = Date.now();
+    const remaining = Math.max(0, Math.ceil((this.currentPhaseDeadline - now) / 1000));
+    this.gameState.timeRemaining = remaining;
+
+    if (this.gameState.phase === 'CHOOSING_WORD') {
+      if (remaining <= 0) {
+        this.selectWord(this.currentWordChoices[0] || 'Apple');
+      } else {
+        this.timerInterval = setInterval(() => {
+          const rem = Math.max(0, Math.ceil((this.currentPhaseDeadline - Date.now()) / 1000));
+          this.gameState.timeRemaining = rem;
+          if (rem <= 0) {
+            this.clearTimer();
+            this.selectWord(this.currentWordChoices[0] || 'Apple');
+          } else {
+            this.broadcastState();
+          }
+        }, 1000);
+      }
+    } else if (this.gameState.phase === 'DRAWING') {
+      if (remaining <= 0) {
+        this.endTurn('Time is up!');
+      } else {
+        this.timerInterval = setInterval(() => {
+          const rem = Math.max(0, Math.ceil((this.roundDeadline - Date.now()) / 1000));
+          this.gameState.timeRemaining = rem;
+          if (this.settings.hintsEnabled) {
+            const { hint, newlyRevealed } = this.hintSystem.update(rem, this.gameState.totalTime);
+            this.gameState.hint = hint;
+            if (newlyRevealed) {
+              this.callbacks.onSoundTrigger('HINT_REVEAL');
+            }
+          }
+          if (rem <= 0) {
+            this.clearTimer();
+            this.endTurn('Time is up!');
+          } else {
+            this.broadcastState();
+          }
+        }, 1000);
+      }
+    } else if (this.gameState.phase === 'ROUND_END') {
+      if (remaining <= 0) {
+        this.advanceTurn();
+      } else {
+        this.timerInterval = setInterval(() => {
+          const rem = Math.max(0, Math.ceil((this.currentPhaseDeadline - Date.now()) / 1000));
+          this.gameState.timeRemaining = rem;
+          if (rem <= 0) {
+            this.clearTimer();
+            this.advanceTurn();
+          } else {
+            this.broadcastState();
+          }
+        }, 1000);
+      }
+    }
+  }
+
+  public handlePlayerReconnect(playerId: string, newSocketId?: string): void {
+    const player = this.players.get(playerId);
+    if (!player) return;
+
+    if (this.isPausedForDisconnect) {
+      this.isPausedForDisconnect = false;
+      this.advanceTurn();
+      return;
+    }
+
+    const now = Date.now();
+    if (this.gameState.phase === 'CHOOSING_WORD') {
+      if (this.currentPhaseDeadline > 0 && now >= this.currentPhaseDeadline) {
+        this.selectWord(this.currentWordChoices[0] || 'Apple');
+      } else {
+        this.ensureTimerRunning();
+        if (this.gameState.currentDrawerId === playerId && newSocketId) {
+          const choices = this.currentWordChoices.length > 0 ? this.currentWordChoices : ['Apple', 'Tree', 'House'];
+          this.callbacks.onDrawerWordChoices(newSocketId, choices);
+        }
+      }
+    } else if (this.gameState.phase === 'DRAWING') {
+      if (this.currentPhaseDeadline > 0 && now >= this.currentPhaseDeadline) {
+        this.endTurn('Time is up!');
+      } else {
+        this.ensureTimerRunning();
+      }
+    } else if (this.gameState.phase === 'ROUND_END') {
+      if (this.currentPhaseDeadline > 0 && now >= this.currentPhaseDeadline) {
+        this.advanceTurn();
+      } else {
+        this.ensureTimerRunning();
+      }
+    }
+
+    this.broadcastState();
   }
 
   public clearTimer(): void {
